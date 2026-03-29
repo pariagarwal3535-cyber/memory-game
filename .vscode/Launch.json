@@ -1,0 +1,45 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "Main",
+            "projectName": "Memory game_934c6cf0"
+        },
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "Main",
+            "projectName": "Memory game_48822d18"
+        },
+        {
+            "type": "java",
+            "name": "Launch Memory Game",
+            "request": "launch",
+            "mainClass": "Main",
+            "projectName": "MemoryGame",
+            "classPaths": [
+                "${workspaceFolder}/bin"
+            ],
+            "sourcePaths": [
+                "${workspaceFolder}/src"
+            ]
+        },
+        {
+            "type": "java",
+            "name": "Launch Multiplayer Server",
+            "request": "launch",
+            "mainClass": "network.GameServer",
+            "projectName": "MemoryGame",
+            "classPaths": [
+                "${workspaceFolder}/bin"
+            ],
+            "sourcePaths": [
+                "${workspaceFolder}/src"
+            ]
+        }
+    ]
+}
