@@ -1,5 +1,5 @@
-# Use Java 17 with full JDK
-FROM eclipse-temurin:17-jdk
+# Use correct Java 17 image that exists on Docker Hub
+FROM eclipse-temurin:17-jdk-jammy
 
 # Set working directory
 WORKDIR /app
@@ -10,11 +10,11 @@ COPY . .
 # Create bin directory
 RUN mkdir -p bin
 
-# Compile - find all java files and compile them
+# Compile all Java files
 RUN find src -name "*.java" > sources.txt && \
     javac -d bin -cp "lib/*" @sources.txt
 
-# Expose port
+# Expose game server port
 EXPOSE 55555
 
 # Start the multiplayer server
