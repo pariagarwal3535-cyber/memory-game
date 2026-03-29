@@ -1,13 +1,12 @@
 package network;
 
-import model.Card;
-import model.GameBoard;
-import model.MultiplayerRoom;
-
 import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
+import model.Card;
+import model.GameBoard;
+import model.MultiplayerRoom;
 
 /**
  * TCP server that hosts multiplayer Memory Game sessions.
@@ -34,7 +33,11 @@ import java.util.concurrent.*;
  */
 public class GameServer {
 
-    public static final int PORT = 55555;
+    public static final int PORT;
+static {
+    String p = System.getenv("PORT");
+    PORT = (p != null) ? Integer.parseInt(p) : 55555;
+}
 
     // roomId → room data
     private final Map<String, MultiplayerRoom> rooms = new ConcurrentHashMap<>();
