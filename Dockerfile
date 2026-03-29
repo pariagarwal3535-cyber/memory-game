@@ -1,19 +1,20 @@
-# Use Java 17
-FROM openjdk:17-slim
+# Use Java 17 with full JDK
+FROM eclipse-temurin:17-jdk
 
 # Set working directory
 WORKDIR /app
 
-# Copy everything
+# Copy all project files
 COPY . .
 
 # Create bin directory
 RUN mkdir -p bin
 
-# Compile all Java files with MongoDB JARs
-RUN javac -d bin -cp "lib/*" -sourcepath src src/Main.java
+# Compile - find all java files and compile them
+RUN find src -name "*.java" > sources.txt && \
+    javac -d bin -cp "lib/*" @sources.txt
 
-# Expose the game server port
+# Expose port
 EXPOSE 55555
 
 # Start the multiplayer server
