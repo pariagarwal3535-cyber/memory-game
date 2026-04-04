@@ -161,17 +161,19 @@ public class GameBoardView extends JPanel {
         int rows = board.getRows();
         int cols = board.getCols();
 
-        // Available area = window minus HUD (50px) and padding
-        int availW = getWidth()  - 40;
-        int availH = getHeight() - 70;
+        // Available area = full window minus HUD and padding
+        int availW = getWidth()  - 20;
+        int availH = getHeight() - 60;
 
         if (availW <= 0 || availH <= 0) return;
 
-        // Calculate max card size that fits all rows and cols
-        int cardW = (availW - cols * 6) / cols;
-        int cardH = (availH - rows * 6) / rows;
+        // Calculate card size to fill as much space as possible
+        int cardW = (availW - (cols + 1) * 6) / cols;
+        int cardH = (availH - (rows + 1) * 6) / rows;
         int cardSize = Math.min(cardW, cardH);
-        cardSize = Math.max(40, Math.min(cardSize, 130)); // clamp 40–130px
+
+        // Minimum 60px, maximum 160px for big clear cards
+        cardSize = Math.max(60, Math.min(cardSize, 160));
 
         // Update all card preferred sizes
         for (int r = 0; r < rows; r++) {

@@ -10,7 +10,8 @@ import util.UIConstants;
 /**
  * A single card on the game board.
  * Supports dynamic resizing via setCardSize().
- * Renders card back (face-down) or card image (face-up).
+ * Shows real emoji/images on face-up cards.
+ * Shows decorated back on face-down cards.
  */
 public class CardView extends JButton {
 
@@ -46,10 +47,7 @@ public class CardView extends JButton {
 
     public Card getCard() { return card; }
 
-    /** Repaint this card */
-    public void update() {
-        repaint();
-    }
+    public void update() { repaint(); }
 
     @Override
     protected void paintComponent(Graphics g) {
@@ -63,64 +61,77 @@ public class CardView extends JButton {
 
         int w   = getWidth();
         int h   = getHeight();
-        int arc = 12;
+        int arc = 16;
 
         if (card.isMatched()) {
-            // Green — matched pair
-            g2.setColor(UIConstants.CARD_MATCHED);
-            g2.fill(new RoundRectangle2D.Float(2, 2, w - 4, h - 4, arc, arc));
-            // Green border
-            g2.setColor(UIConstants.CARD_MATCHED.darker());
-            g2.setStroke(new BasicStroke(2f));
-            g2.draw(new RoundRectangle2D.Float(2, 2, w - 4, h - 4, arc, arc));
-            drawImage(g2, w, h);
+            // Matched — green background with image
+            paintBackground(g2, UIConstants.CARD_MATCHED, UIConstants.CARD_MATCHED.darker(), w, h, arc);
+            drawCardImage(g2, w, h, 8);
 
         } else if (card.isFlipped()) {
-            // White — face up / revealed
-            g2.setColor(UIConstants.CARD_FACE);
-            g2.fill(new RoundRectangle2D.Float(2, 2, w - 4, h - 4, arc, arc));
-            g2.setColor(UIConstants.ACCENT_BLUE);
-            g2.setStroke(new BasicStroke(2.5f));
-            g2.draw(new RoundRectangle2D.Float(2, 2, w - 4, h - 4, arc, arc));
-            drawImage(g2, w, h);
+            // Face-up — white background with image
+            paintBackground(g2, UIConstants.CARD_FACE, UIConstants.ACCENT_BLUE, w, h, arc);
+            drawCardImage(g2, w, h, 8);
 
         } else {
-            // Dark blue — face down
-            g2.setColor(UIConstants.CARD_BACK);
-            g2.fill(new RoundRectangle2D.Float(2, 2, w - 4, h - 4, arc, arc));
-
-            // Diagonal stripe pattern on back
-            g2.setColor(new Color(50, 80, 140, 60));
-            g2.setStroke(new BasicStroke(1.5f));
-            for (int i = -h; i < w + h; i += 14) {
-                g2.drawLine(i, 0, i + h, h);
-            }
-
-            // "?" label
-            g2.setColor(new Color(90, 130, 210));
-            int fontSize = Math.max(12, (int) (h * 0.36));
-            g2.setFont(new Font("Segoe UI", Font.BOLD, fontSize));
-            FontMetrics fm = g2.getFontMetrics();
-            String qm = "?";
-            int tx = (w - fm.stringWidth(qm)) / 2;
-            int ty = (h + fm.getAscent() - fm.getDescent()) / 2;
-            g2.drawString(qm, tx, ty);
-
-            // Border
-            g2.setColor(new Color(60, 90, 160));
-            g2.setStroke(new BasicStroke(1.5f));
-            g2.draw(new RoundRectangle2D.Float(2, 2, w - 4, h - 4, arc, arc));
+            // Face-down — dark blue with decorative pattern
+            paintBack(g2, w, h, arc);
         }
 
         g2.dispose();
     }
 
-    /** Draw the card's image centered within the card bounds */
-    private void drawImage(Graphics2D g2, int w, int h) {
+    private void paintBackground(Graphics2D g2, Color fill, Color border,
+                                  int w, int h, int arc) {
+        g2.setColor(fill);
+        g2.fill(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+        g2.setColor(border);
+        g2.setStroke(new BasicStroke(2.5f));
+        g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+    }
+
+    private void paintBack(Graphics2D g2, int w, int h, int arc) {
+        // Dark blue base
+        g2.setColor(UIConstants.CARD_BACK);
+        g2.fill(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+
+        // Subtle diagonal stripe pattern
+        g2.setColor(new Color(50, 85, 150, 55));
+        g2.setStroke(new BasicStroke(1.5f));
+        for (int i = -h; i < w + h; i += 16) {
+            g2.drawLine(i, 0, i + h, h);
+        }
+
+        // Inner rounded border
+        g2.setColor(new Color(70, 110, 180, 120));
+        g2.setStroke(new BasicStroke(1.5f));
+        int pad = 8;
+        g2.draw(new RoundRectangle2D.Float(pad, pad, w-pad*2, h-pad*2, arc/2, arc/2));
+
+        // Question mark in center
+        g2.setColor(new Color(100, 145, 220));
+        int fontSize = Math.max(18, (int)(h * 0.38));
+        g2.setFont(new Font("Segoe UI", Font.BOLD, fontSize));
+        FontMetrics fm = g2.getFontMetrics();
+        String qm = "?";
+        int tx = (w - fm.stringWidth(qm)) / 2;
+        int ty = (h - fm.getHeight()) / 2 + fm.getAscent();
+        g2.drawString(qm, tx, ty);
+
+        // Outer border
+        g2.setColor(new Color(60, 95, 165));
+        g2.setStroke(new BasicStroke(2f));
+        g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+    }
+
+    /**
+     * Draw the card image/emoji centered on the card.
+     * Uses ImageLoader which tries real files first, then built-in emojis.
+     */
+    private void drawCardImage(Graphics2D g2, int w, int h, int pad) {
         String category = card.getCategory().name().toLowerCase();
         String filename  = card.getValue();
-        int    pad      = 6;
-        int    imgSize  = Math.min(w, h) - (pad * 2);
+        int    imgSize   = Math.min(w, h) - (pad * 2);
         if (imgSize < 10) return;
 
         ImageIcon icon = ImageLoader.loadImage(category, filename, imgSize);
