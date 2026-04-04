@@ -395,21 +395,26 @@ public class MultiplayerView extends JPanel {
                 break;
             case "JOINED":
                 myColor = parts[2];
-                String scoreboard = message.substring(message.indexOf(parts[2]) + parts[2].length() + 1);
                 statusLabel.setText("Joined room " + parts[1] + "! Waiting for host to start...");
                 break;
             case "PLAYER_JOINED":
                 statusLabel.setText(parts[1] + " joined! " + extractPlayerCount(message) + " players in room.");
                 break;
             case "START": {
+                // Format: START:<rows>:<cols>:<values>:<scoreboard>:<firstTurn>
                 int rows = Integer.parseInt(parts[1]);
                 int cols = Integer.parseInt(parts[2]);
                 String[] values = parts[3].split(",");
-                String sb = parts[4];
-                String firstTurn = parts[5];
+                // Extract scoreboard and firstTurn from remaining message
+                String afterValues = message.substring(
+                    "START:".length() + parts[1].length() + 1
+                    + parts[2].length() + 1 + parts[3].length() + 1);
+                int lastColon = afterValues.lastIndexOf(":");
+                String sb = lastColon > 0 ? afterValues.substring(0, lastColon) : afterValues;
+                String firstTurn = lastColon > 0 ? afterValues.substring(lastColon + 1) : "";
                 listener.onGameStart(roomId, username, client,
                         rows, cols, values, selectedCategory,
-                        myColor, sb, firstTurn);
+                        myColor != null ? myColor : "#3498DB", sb, firstTurn);
                 break;
             }
             case "ERROR":

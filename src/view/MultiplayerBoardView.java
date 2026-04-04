@@ -146,27 +146,39 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
             String pName  = parts[0];
             String pScore = parts[1];
             String pColor = parts[2];
-            Color color;
-            try { color = Color.decode(pColor); } catch (Exception e) { color = Color.WHITE; }
+
+            // Declare as final so it can be used in anonymous inner class
+            Color decoded;
+            try {
+                decoded = Color.decode(pColor);
+            } catch (Exception ex) {
+                decoded = Color.WHITE;
+            }
+            final Color color = decoded;
 
             JPanel pill = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
             pill.setOpaque(true);
-            pill.setBackground(new Color(color.getRed(), color.getGreen(), color.getBlue(), 40));
+            // Use explicit alpha constructor
+            pill.setBackground(new Color(color.getRed(), color.getGreen(),
+                    color.getBlue(), 40));
             pill.setBorder(BorderFactory.createLineBorder(color, 2));
 
-            // Color dot
+            // Color dot — uses final color safely
             JPanel dot = new JPanel() {
-                @Override protected void paintComponent(Graphics g) {
+                @Override
+                protected void paintComponent(Graphics g) {
                     g.setColor(color);
-                    g.fillOval(2, 2, getWidth()-4, getHeight()-4);
+                    g.fillOval(2, 2, getWidth() - 4, getHeight() - 4);
                 }
             };
             dot.setPreferredSize(new Dimension(14, 14));
             dot.setOpaque(false);
 
+            final String finalPName = pName;
             JLabel nameLbl = new JLabel(pName + ": " + pScore);
             nameLbl.setFont(new Font("Segoe UI", Font.BOLD, 12));
-            nameLbl.setForeground(pName.equals(myUsername) ? color : UIConstants.TEXT_PRIMARY);
+            nameLbl.setForeground(
+                    finalPName.equals(myUsername) ? color : UIConstants.TEXT_PRIMARY);
 
             pill.add(dot);
             pill.add(nameLbl);
@@ -202,7 +214,7 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
 
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                JButton btn = createCardButton(cardSize);
+                JButton btn = createCardButton(cardSize, r, c);
                 final int row = r, col = c;
                 btn.addActionListener(new ActionListener() {
                     @Override public void actionPerformed(ActionEvent e) {
@@ -220,74 +232,86 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
         add(wrapper, BorderLayout.CENTER);
     }
 
-    private JButton createCardButton(int size) {
-        JButton btn = new JButton("?") {
-            @Override protected void paintComponent(Graphics g) {
-                int idx = getIndex();
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                int w = getWidth(), h = getHeight(), arc = 10;
-                if (matched[idx]) {
-                    // Show matched player's color
-                    Color mc = Color.decode(matchedByColor[idx] != null ? matchedByColor[idx] : "#2ECC71");
-                    g2.setColor(mc);
-                    g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                    g2.setColor(mc.brighter());
-                    g2.setStroke(new BasicStroke(2f));
-                    g2.draw(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                    // Draw card value
-                    g2.setColor(Color.WHITE);
-                    g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h*0.36)));
-                    FontMetrics fm = g2.getFontMetrics();
-                    String val = values[idx];
-                    g2.drawString(val, (w - fm.stringWidth(val))/2,
-                            (h + fm.getAscent() - fm.getDescent())/2);
-                } else if (flipped[idx]) {
-                    g2.setColor(UIConstants.CARD_FACE);
-                    g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                    g2.setColor(UIConstants.ACCENT_BLUE);
-                    g2.setStroke(new BasicStroke(2.5f));
-                    g2.draw(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                    g2.setColor(new Color(30,30,30));
-                    g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h*0.36)));
-                    FontMetrics fm = g2.getFontMetrics();
-                    String val = values[idx];
-                    g2.drawString(val, (w - fm.stringWidth(val))/2,
-                            (h + fm.getAscent() - fm.getDescent())/2);
-                } else {
-                    g2.setColor(UIConstants.CARD_BACK);
-                    g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                    // Blocked indicator
-                    if (!isMyTurn) {
-                        g2.setColor(new Color(255,255,255,15));
-                        g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                    }
-                    g2.setColor(new Color(80,120,200));
-                    g2.setFont(new Font("Segoe UI", Font.BOLD, (int)(h*0.36)));
-                    FontMetrics fm = g2.getFontMetrics();
-                    String qm = "?";
-                    g2.drawString(qm, (w - fm.stringWidth(qm))/2,
-                            (h + fm.getAscent() - fm.getDescent())/2);
-                    g2.setColor(new Color(60,90,160));
-                    g2.setStroke(new BasicStroke(1.5f));
-                    g2.draw(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
-                }
-                g2.dispose();
-            }
+    /**
+     * Custom card button that stores its own row/col index.
+     * Renders different states: face-down, face-up, matched (with player color).
+     */
+    private class MPCardButton extends JButton {
+        private final int row;
+        private final int col;
 
-            private int getIndex() {
-                for (int r = 0; r < rows; r++)
-                    for (int c = 0; c < cols; c++)
-                        if (cardButtons[r][c] == this) return r * cols + c;
-                return 0;
+        MPCardButton(int row, int col, int size) {
+            super("?");
+            this.row = row;
+            this.col = col;
+            setPreferredSize(new Dimension(size, size));
+            setContentAreaFilled(false);
+            setFocusPainted(false);
+            setBorderPainted(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            int idx = row * cols + col;
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON);
+            int w = getWidth(), h = getHeight(), arc = 10;
+
+            if (matched[idx]) {
+                String colorStr = matchedByColor[idx] != null ? matchedByColor[idx] : "#2ECC71";
+                Color mcDecoded;
+                try { mcDecoded = Color.decode(colorStr); } catch (Exception ex) { mcDecoded = new Color(46,204,113); }
+                Color mc = mcDecoded;
+                g2.setColor(mc);
+                g2.fill(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+                g2.setColor(mc.brighter());
+                g2.setStroke(new BasicStroke(2f));
+                g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h * 0.36)));
+                FontMetrics fm = g2.getFontMetrics();
+                String val = values[idx];
+                g2.drawString(val, (w - fm.stringWidth(val)) / 2,
+                        (h + fm.getAscent() - fm.getDescent()) / 2);
+
+            } else if (flipped[idx]) {
+                g2.setColor(UIConstants.CARD_FACE);
+                g2.fill(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+                g2.setColor(UIConstants.ACCENT_BLUE);
+                g2.setStroke(new BasicStroke(2.5f));
+                g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+                g2.setColor(new Color(30, 30, 30));
+                g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h * 0.36)));
+                FontMetrics fm = g2.getFontMetrics();
+                String val = values[idx];
+                g2.drawString(val, (w - fm.stringWidth(val)) / 2,
+                        (h + fm.getAscent() - fm.getDescent()) / 2);
+
+            } else {
+                g2.setColor(UIConstants.CARD_BACK);
+                g2.fill(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+                if (!isMyTurn) {
+                    g2.setColor(new Color(255, 255, 255, 15));
+                    g2.fill(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
+                }
+                g2.setColor(new Color(80, 120, 200));
+                g2.setFont(new Font("Segoe UI", Font.BOLD, (int)(h * 0.36)));
+                FontMetrics fm = g2.getFontMetrics();
+                String qm = "?";
+                g2.drawString(qm, (w - fm.stringWidth(qm)) / 2,
+                        (h + fm.getAscent() - fm.getDescent()) / 2);
+                g2.setColor(new Color(60, 90, 160));
+                g2.setStroke(new BasicStroke(1.5f));
+                g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
             }
-        };
-        btn.setPreferredSize(new Dimension(size, size));
-        btn.setContentAreaFilled(false);
-        btn.setFocusPainted(false);
-        btn.setBorderPainted(false);
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        return btn;
+            g2.dispose();
+        }
+    }
+
+    private JButton createCardButton(int size, int row, int col) {
+        return new MPCardButton(row, col, size);
     }
 
     private void onCardClick(int row, int col) {
@@ -328,21 +352,28 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 break;
             }
             case "MATCH": {
-                // MATCH:<username>:<r1>:<c1>:<r2>:<c2>:<color>:<scoreboard>
+                // MATCH:<username>:<r1>:<c1>:<r2>:<c2>:<#color>:<scoreboard>
+                // p[6] is the hex color like #E74C3C
+                if (p.length < 7) break;
                 int r1 = Integer.parseInt(p[2]), c1 = Integer.parseInt(p[3]);
                 int r2 = Integer.parseInt(p[4]), c2 = Integer.parseInt(p[5]);
                 String color = p[6];
-                // Rebuild scoreboard from rest
-                String sb = message.substring(message.indexOf(p[6]) + p[6].length() + 1);
 
-                matched[r1*cols+c1] = true;
-                matched[r2*cols+c2] = true;
-                matchedByColor[r1*cols+c1] = color;
-                matchedByColor[r2*cols+c2] = color;
+                // Scoreboard comes after color field
+                int colorEnd = "MATCH:".length() + p[1].length() + 1
+                        + p[2].length() + 1 + p[3].length() + 1
+                        + p[4].length() + 1 + p[5].length() + 1
+                        + p[6].length() + 1;
+                String sb = colorEnd < message.length() ? message.substring(colorEnd) : "";
+
+                matched[r1 * cols + c1] = true;
+                matched[r2 * cols + c2] = true;
+                matchedByColor[r1 * cols + c1] = color;
+                matchedByColor[r2 * cols + c2] = color;
                 cardButtons[r1][c1].repaint();
                 cardButtons[r2][c2].repaint();
 
-                buildScorePanel(sb, "");
+                if (!sb.isEmpty()) buildScorePanel(sb, "");
                 statusLabel.setText(p[1] + " matched!");
                 break;
             }
@@ -370,23 +401,32 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 break;
             }
             case "PLAYER_JOINED": {
-                // PLAYER_JOINED:<username>:<color>:<scoreboard>
-                String sb = message.substring(message.indexOf(p[2]) + p[2].length() + 1);
-                buildScorePanel(sb, "");
+                // PLAYER_JOINED:<username>:<#color>:<scoreboard>
+                if (p.length >= 3) {
+                    int sbStart = "PLAYER_JOINED:".length() + p[1].length() + 1
+                            + p[2].length() + 1;
+                    String sb = sbStart < message.length() ? message.substring(sbStart) : "";
+                    if (!sb.isEmpty()) buildScorePanel(sb, "");
+                }
                 statusLabel.setText(p[1] + " joined the room!");
                 break;
             }
             case "PLAYER_LEFT": {
-                String sb = message.substring(message.indexOf(p[1]) + p[1].length() + 1);
-                buildScorePanel(sb, "");
+                int sbStart = "PLAYER_LEFT:".length() + p[1].length() + 1;
+                String sb = sbStart < message.length() ? message.substring(sbStart) : "";
+                if (!sb.isEmpty()) buildScorePanel(sb, "");
                 statusLabel.setText(p[1] + " left the game.");
                 break;
             }
             case "LEVEL_COMPLETE": {
                 // LEVEL_COMPLETE:<winner>:<scoreboard>:<level>
                 String winner = p[1];
-                String sb     = p[2];
-                int level     = Integer.parseInt(p[3]);
+                String levelStr = p[p.length - 1];
+                int level = 1;
+                try { level = Integer.parseInt(levelStr); } catch (Exception ex) {}
+                int sbStart = "LEVEL_COMPLETE:".length() + p[1].length() + 1;
+                int sbEnd   = message.lastIndexOf(":");
+                String sb   = (sbStart < sbEnd) ? message.substring(sbStart, sbEnd) : "";
                 showLevelCompleteDialog(winner, sb, level);
                 break;
             }
@@ -491,8 +531,9 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
     private JButton makeButton(String text, Color bg) { return makeDialogBtn(text, bg); }
 
     private void repaintAllCards() {
-        for (JButton[] row : cardButtons)
-            for (JButton btn : row)
-                if (btn != null) btn.repaint();
+        if (cardButtons == null) return;
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                if (cardButtons[r][c] != null) cardButtons[r][c].repaint();
     }
 }

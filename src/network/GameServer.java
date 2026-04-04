@@ -279,7 +279,8 @@ public class GameServer {
 
         // Check if all players voted
         if (room.levelVotes.size() >= room.players.size()) {
-            long yesVotes = room.levelVotes.values().stream().filter(v -> v).count();
+            long yesVotes = 0;
+            for (Boolean v : room.levelVotes.values()) { if (v) yesVotes++; }
             if (yesVotes > room.players.size() / 2) {
                 // Majority wants next level
                 room.level = Math.min(room.level + 1, 10);
@@ -301,7 +302,8 @@ public class GameServer {
         if (room == null) return;
 
         // Find winner(s)
-        int maxScore = room.scores.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+        int maxScore = 0;
+        for (int s : room.scores.values()) { if (s > maxScore) maxScore = s; }
         List<String> winners = new ArrayList<>();
         for (Map.Entry<String, Integer> e : room.scores.entrySet()) {
             if (e.getValue() == maxScore) winners.add(e.getKey());
