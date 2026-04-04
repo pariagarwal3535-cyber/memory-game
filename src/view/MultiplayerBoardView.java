@@ -7,22 +7,27 @@ import util.UIConstants;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.*;
+import java.awt.geom.RoundRectangle2D;
 
 /**
- * Game board for multiplayer sessions.
- * Receives server messages via GameClient and renders opponent moves too.
+ * Multiplayer game board.
+ * Features:
+ * - Turn-based blocking (only current player can click)
+ * - Player color display panel
+ * - Cards matched by a player show that player's color
+ * - Level complete voting dialog
+ * - Multiple players support
  */
 public class MultiplayerBoardView extends JPanel implements GameClient.MessageListener {
 
-    public interface MPBoardListener {
-        void onHomeClicked();
-    }
+    public interface MPBoardListener { void onHomeClicked(); }
 
-    // Server-provided board data
-    private int rows, cols;
-    private String[] values;       // flat array: row*cols+col
-    private boolean[] flipped;     // face-up?
-    private boolean[] matched;     // matched?
+    private final int rows, cols;
+    private final String[] values;
+    private final boolean[] flipped;
+    private final boolean[] matched;
+    private final String[] matchedByColor; // color of player who matched each card
 
     private JButton[][] cardButtons;
     private GameClient client;
@@ -31,22 +36,23 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
     private Card.Category category;
     private MPBoardListener boardListener;
 
+    // Turn state
+    private String currentTurnPlayer = "";
+    private boolean isMyTurn = false;
+
     // HUD
-    private JLabel myScoreLabel;
-    private JLabel oppScoreLabel;
     private JLabel statusLabel;
+    private JLabel turnLabel;
+    private JPanel playerScorePanel;
 
-    private int myScore  = 0;
-    private int oppScore = 0;
-    private String opponentName = "Opponent";
-
-    // Pending flip tracking (for MISS hide-back)
-    private int pendingR1 = -1, pendingC1 = -1;
-    private int pendingR2 = -1, pendingC2 = -1;
+    // Card size
+    private int cardSize = 80;
 
     public MultiplayerBoardView(String roomId, String myUsername, GameClient client,
                                  int rows, int cols, String[] values,
-                                 Card.Category category, MPBoardListener listener) {
+                                 Card.Category category, String myColor,
+                                 String scoreboard, String firstTurnPlayer,
+                                 MPBoardListener listener) {
         this.roomId      = roomId;
         this.myUsername  = myUsername;
         this.client      = client;
@@ -55,94 +61,154 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
         this.values      = values;
         this.category    = category;
         this.boardListener = listener;
+        this.currentTurnPlayer = firstTurnPlayer;
+        this.isMyTurn = myUsername.equals(firstTurnPlayer);
 
-        flipped = new boolean[rows * cols];
-        matched = new boolean[rows * cols];
+        flipped       = new boolean[rows * cols];
+        matched       = new boolean[rows * cols];
+        matchedByColor = new String[rows * cols];
 
-        // Set this view as the active message listener
         client.setListener(this);
 
         setBackground(UIConstants.BG_DARK);
         setLayout(new BorderLayout());
-        buildHUD();
+        buildHUD(myColor, scoreboard);
         buildGrid();
+        updateTurnLabel();
     }
 
     // ---- HUD ----
 
-    private void buildHUD() {
+    private void buildHUD(String myColor, String scoreboard) {
         JPanel hud = new JPanel(new BorderLayout());
         hud.setBackground(UIConstants.BG_PANEL);
-        hud.setBorder(new EmptyBorder(10, 20, 10, 20));
+        hud.setBorder(new EmptyBorder(8, 16, 8, 16));
+        hud.setPreferredSize(new Dimension(0, 90));
 
-        // Left: my score
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        left.setOpaque(false);
-        JLabel youLbl = new JLabel("You");
-        youLbl.setFont(UIConstants.FONT_SMALL);
-        youLbl.setForeground(UIConstants.TEXT_MUTED);
-        myScoreLabel = new JLabel("0");
-        myScoreLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
-        myScoreLabel.setForeground(UIConstants.ACCENT_CYAN);
-        left.add(youLbl);
-        left.add(myScoreLabel);
+        // Top row: title + home
+        JPanel topRow = new JPanel(new BorderLayout());
+        topRow.setOpaque(false);
+        JLabel title = new JLabel("Memory Game - Multiplayer", SwingConstants.CENTER);
+        title.setFont(UIConstants.FONT_HEADING);
+        title.setForeground(UIConstants.ACCENT_CYAN);
 
-        // Center: status
-        statusLabel = new JLabel("🎮 " + myUsername + " vs " + opponentName,
-                SwingConstants.CENTER);
-        statusLabel.setFont(UIConstants.FONT_BODY);
-        statusLabel.setForeground(UIConstants.TEXT_PRIMARY);
-
-        // Right: opp score + home
-        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-        right.setOpaque(false);
-        oppScoreLabel = new JLabel("0");
-        oppScoreLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
-        oppScoreLabel.setForeground(UIConstants.ACCENT_PURPLE);
-        JLabel oppLbl = new JLabel(opponentName);
-        oppLbl.setFont(UIConstants.FONT_SMALL);
-        oppLbl.setForeground(UIConstants.TEXT_MUTED);
-
-        StyledButton homeBtn = new StyledButton("🏠",
-                new Color(60,60,80), new Color(90,90,110));
-        homeBtn.setPreferredSize(new Dimension(50, 32));
-        homeBtn.addActionListener(e -> {
-            client.quit(roomId, myUsername);
-            client.disconnect();
-            boardListener.onHomeClicked();
+        JButton homeBtn = new JButton("Home");
+        homeBtn.setFont(UIConstants.FONT_SMALL);
+        homeBtn.setBackground(new Color(60,60,80));
+        homeBtn.setForeground(UIConstants.TEXT_PRIMARY);
+        homeBtn.setFocusPainted(false);
+        homeBtn.setOpaque(true);
+        homeBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        homeBtn.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                client.quit(roomId, myUsername);
+                client.disconnect();
+                boardListener.onHomeClicked();
+            }
         });
 
-        right.add(oppScoreLabel);
-        right.add(oppLbl);
-        right.add(homeBtn);
+        topRow.add(title, BorderLayout.CENTER);
+        topRow.add(homeBtn, BorderLayout.EAST);
 
-        hud.add(left,        BorderLayout.WEST);
-        hud.add(statusLabel, BorderLayout.CENTER);
-        hud.add(right,       BorderLayout.EAST);
+        // Bottom row: turn label + player scores
+        JPanel botRow = new JPanel(new BorderLayout());
+        botRow.setOpaque(false);
+
+        turnLabel = new JLabel("", SwingConstants.LEFT);
+        turnLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+
+        statusLabel = new JLabel(" ", SwingConstants.CENTER);
+        statusLabel.setFont(UIConstants.FONT_SMALL);
+        statusLabel.setForeground(UIConstants.TEXT_MUTED);
+
+        // Player scores panel
+        playerScorePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
+        playerScorePanel.setOpaque(false);
+        buildScorePanel(scoreboard, myColor);
+
+        botRow.add(turnLabel,        BorderLayout.WEST);
+        botRow.add(statusLabel,      BorderLayout.CENTER);
+        botRow.add(playerScorePanel, BorderLayout.EAST);
+
+        hud.add(topRow, BorderLayout.NORTH);
+        hud.add(botRow, BorderLayout.SOUTH);
 
         add(hud, BorderLayout.NORTH);
+    }
+
+    private void buildScorePanel(String scoreboard, String myColor) {
+        playerScorePanel.removeAll();
+        if (scoreboard == null || scoreboard.isEmpty()) return;
+        String[] entries = scoreboard.split(",");
+        for (String entry : entries) {
+            String[] parts = entry.split(":");
+            if (parts.length < 3) continue;
+            String pName  = parts[0];
+            String pScore = parts[1];
+            String pColor = parts[2];
+            Color color;
+            try { color = Color.decode(pColor); } catch (Exception e) { color = Color.WHITE; }
+
+            JPanel pill = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            pill.setOpaque(true);
+            pill.setBackground(new Color(color.getRed(), color.getGreen(), color.getBlue(), 40));
+            pill.setBorder(BorderFactory.createLineBorder(color, 2));
+
+            // Color dot
+            JPanel dot = new JPanel() {
+                @Override protected void paintComponent(Graphics g) {
+                    g.setColor(color);
+                    g.fillOval(2, 2, getWidth()-4, getHeight()-4);
+                }
+            };
+            dot.setPreferredSize(new Dimension(14, 14));
+            dot.setOpaque(false);
+
+            JLabel nameLbl = new JLabel(pName + ": " + pScore);
+            nameLbl.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            nameLbl.setForeground(pName.equals(myUsername) ? color : UIConstants.TEXT_PRIMARY);
+
+            pill.add(dot);
+            pill.add(nameLbl);
+            playerScorePanel.add(pill);
+        }
+        playerScorePanel.revalidate();
+        playerScorePanel.repaint();
+    }
+
+    private void updateTurnLabel() {
+        if (isMyTurn) {
+            turnLabel.setText("  YOUR TURN");
+            turnLabel.setForeground(UIConstants.SUCCESS_GREEN);
+        } else {
+            turnLabel.setText("  " + currentTurnPlayer + "'s turn");
+            turnLabel.setForeground(UIConstants.TEXT_MUTED);
+        }
     }
 
     // ---- Grid ----
 
     private void buildGrid() {
-        int maxW = UIConstants.WINDOW_WIDTH  - 60;
-        int maxH = UIConstants.WINDOW_HEIGHT - 120;
-        int cardW = Math.min(UIConstants.CARD_MAX_SIZE, maxW / cols);
-        int cardH = Math.min(UIConstants.CARD_MAX_SIZE, maxH / rows);
-        int cardSize = Math.max(UIConstants.CARD_MIN_SIZE, Math.min(cardW, cardH));
+        int availW = UIConstants.WINDOW_WIDTH  - 40;
+        int availH = UIConstants.WINDOW_HEIGHT - 110;
+        int cw = (availW - cols * 6) / cols;
+        int ch = (availH - rows * 6) / rows;
+        cardSize = Math.max(40, Math.min(Math.min(cw, ch), 120));
 
         JPanel grid = new JPanel(new GridLayout(rows, cols, 6, 6));
         grid.setBackground(UIConstants.BG_DARK);
-        grid.setBorder(new EmptyBorder(16, 16, 16, 16));
-
+        grid.setBorder(new EmptyBorder(10, 10, 10, 10));
         cardButtons = new JButton[rows][cols];
 
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 JButton btn = createCardButton(cardSize);
                 final int row = r, col = c;
-                btn.addActionListener(e -> onCardClick(row, col));
+                btn.addActionListener(new ActionListener() {
+                    @Override public void actionPerformed(ActionEvent e) {
+                        onCardClick(row, col);
+                    }
+                });
                 cardButtons[r][c] = btn;
                 grid.add(btn);
             }
@@ -155,20 +221,78 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
     }
 
     private JButton createCardButton(int size) {
-        JButton btn = new JButton("?");
+        JButton btn = new JButton("?") {
+            @Override protected void paintComponent(Graphics g) {
+                int idx = getIndex();
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int w = getWidth(), h = getHeight(), arc = 10;
+                if (matched[idx]) {
+                    // Show matched player's color
+                    Color mc = Color.decode(matchedByColor[idx] != null ? matchedByColor[idx] : "#2ECC71");
+                    g2.setColor(mc);
+                    g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                    g2.setColor(mc.brighter());
+                    g2.setStroke(new BasicStroke(2f));
+                    g2.draw(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                    // Draw card value
+                    g2.setColor(Color.WHITE);
+                    g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h*0.36)));
+                    FontMetrics fm = g2.getFontMetrics();
+                    String val = values[idx];
+                    g2.drawString(val, (w - fm.stringWidth(val))/2,
+                            (h + fm.getAscent() - fm.getDescent())/2);
+                } else if (flipped[idx]) {
+                    g2.setColor(UIConstants.CARD_FACE);
+                    g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                    g2.setColor(UIConstants.ACCENT_BLUE);
+                    g2.setStroke(new BasicStroke(2.5f));
+                    g2.draw(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                    g2.setColor(new Color(30,30,30));
+                    g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h*0.36)));
+                    FontMetrics fm = g2.getFontMetrics();
+                    String val = values[idx];
+                    g2.drawString(val, (w - fm.stringWidth(val))/2,
+                            (h + fm.getAscent() - fm.getDescent())/2);
+                } else {
+                    g2.setColor(UIConstants.CARD_BACK);
+                    g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                    // Blocked indicator
+                    if (!isMyTurn) {
+                        g2.setColor(new Color(255,255,255,15));
+                        g2.fill(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                    }
+                    g2.setColor(new Color(80,120,200));
+                    g2.setFont(new Font("Segoe UI", Font.BOLD, (int)(h*0.36)));
+                    FontMetrics fm = g2.getFontMetrics();
+                    String qm = "?";
+                    g2.drawString(qm, (w - fm.stringWidth(qm))/2,
+                            (h + fm.getAscent() - fm.getDescent())/2);
+                    g2.setColor(new Color(60,90,160));
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.draw(new RoundRectangle2D.Float(2,2,w-4,h-4,arc,arc));
+                }
+                g2.dispose();
+            }
+
+            private int getIndex() {
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < cols; c++)
+                        if (cardButtons[r][c] == this) return r * cols + c;
+                return 0;
+            }
+        };
         btn.setPreferredSize(new Dimension(size, size));
-        btn.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(size * 0.38)));
-        btn.setBackground(UIConstants.CARD_BACK);
-        btn.setForeground(new Color(60, 90, 150));
+        btn.setContentAreaFilled(false);
         btn.setFocusPainted(false);
-        btn.setBorder(BorderFactory.createLineBorder(new Color(50, 80, 140), 1));
+        btn.setBorderPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return btn;
     }
 
     private void onCardClick(int row, int col) {
         int idx = row * cols + col;
-        if (flipped[idx] || matched[idx]) return;
+        if (!isMyTurn || flipped[idx] || matched[idx]) return;
         client.sendFlip(roomId, myUsername, row, col);
     }
 
@@ -177,21 +301,18 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
     @Override
     public void onMessage(final String message) {
         SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-                processMessage(message);
-            }
+            @Override public void run() { processMessage(message); }
         });
     }
 
     @Override
     public void onDisconnected() {
         SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
+            @Override public void run() {
                 JOptionPane.showMessageDialog(MultiplayerBoardView.this,
-                        "Disconnected from server.",
-                        "Connection Lost", JOptionPane.WARNING_MESSAGE);
+                        "Disconnected from server.", "Connection Lost",
+                        JOptionPane.WARNING_MESSAGE);
+                boardListener.onHomeClicked();
             }
         });
     }
@@ -200,93 +321,178 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
         String[] p = message.split(":");
         switch (p[0]) {
             case "FLIP_ACK": {
-                // FLIP_ACK:<username>:<row>:<col>:<value>
                 int r = Integer.parseInt(p[2]);
                 int c = Integer.parseInt(p[3]);
-                String val = p[4];
-                int idx = r * cols + c;
-                flipped[idx] = true;
-                renderCard(r, c, val, false);
+                flipped[r * cols + c] = true;
+                cardButtons[r][c].repaint();
                 break;
             }
             case "MATCH": {
-                // MATCH:<username>:<r1>:<c1>:<r2>:<c2>:<score>
+                // MATCH:<username>:<r1>:<c1>:<r2>:<c2>:<color>:<scoreboard>
                 int r1 = Integer.parseInt(p[2]), c1 = Integer.parseInt(p[3]);
                 int r2 = Integer.parseInt(p[4]), c2 = Integer.parseInt(p[5]);
-                int score = Integer.parseInt(p[6]);
+                String color = p[6];
+                // Rebuild scoreboard from rest
+                String sb = message.substring(message.indexOf(p[6]) + p[6].length() + 1);
+
                 matched[r1*cols+c1] = true;
                 matched[r2*cols+c2] = true;
-                renderMatched(r1, c1);
-                renderMatched(r2, c2);
-                updateScore(p[1], score);
-                statusLabel.setText(p[1] + " found a match! 🎉");
+                matchedByColor[r1*cols+c1] = color;
+                matchedByColor[r2*cols+c2] = color;
+                cardButtons[r1][c1].repaint();
+                cardButtons[r2][c2].repaint();
+
+                buildScorePanel(sb, "");
+                statusLabel.setText(p[1] + " matched!");
                 break;
             }
             case "MISS": {
-                // MISS:<username>:<r1>:<c1>:<r2>:<c2>
                 int r1 = Integer.parseInt(p[2]), c1 = Integer.parseInt(p[3]);
                 int r2 = Integer.parseInt(p[4]), c2 = Integer.parseInt(p[5]);
                 statusLabel.setText(p[1] + " missed...");
-                // Hide after delay
-                Timer t = new Timer(900, e -> {
-                    flipped[r1*cols+c1] = false;
-                    flipped[r2*cols+c2] = false;
-                    renderCardBack(r1, c1);
-                    renderCardBack(r2, c2);
+                Timer t = new Timer(900, new ActionListener() {
+                    @Override public void actionPerformed(ActionEvent e) {
+                        flipped[r1*cols+c1] = false;
+                        flipped[r2*cols+c2] = false;
+                        cardButtons[r1][c1].repaint();
+                        cardButtons[r2][c2].repaint();
+                    }
                 });
                 t.setRepeats(false);
                 t.start();
                 break;
             }
-            case "GAME_OVER": {
-                // GAME_OVER:<winner>:<p1>:<s1>:<p2>:<s2>
-                String winner = p[1];
-                String msg = winner.equals("TIE")
-                    ? "It's a Tie! 🤝"
-                    : winner + " wins! 🏆";
-                JOptionPane.showMessageDialog(this, msg + "\n\n"
-                        + p[2] + ": " + p[3] + " pts\n"
-                        + p[4] + ": " + p[5] + " pts",
-                        "Game Over", JOptionPane.INFORMATION_MESSAGE);
-                client.disconnect();
-                boardListener.onHomeClicked();
+            case "TURN": {
+                currentTurnPlayer = p[1];
+                isMyTurn = myUsername.equals(currentTurnPlayer);
+                updateTurnLabel();
+                repaintAllCards();
                 break;
             }
+            case "PLAYER_JOINED": {
+                // PLAYER_JOINED:<username>:<color>:<scoreboard>
+                String sb = message.substring(message.indexOf(p[2]) + p[2].length() + 1);
+                buildScorePanel(sb, "");
+                statusLabel.setText(p[1] + " joined the room!");
+                break;
+            }
+            case "PLAYER_LEFT": {
+                String sb = message.substring(message.indexOf(p[1]) + p[1].length() + 1);
+                buildScorePanel(sb, "");
+                statusLabel.setText(p[1] + " left the game.");
+                break;
+            }
+            case "LEVEL_COMPLETE": {
+                // LEVEL_COMPLETE:<winner>:<scoreboard>:<level>
+                String winner = p[1];
+                String sb     = p[2];
+                int level     = Integer.parseInt(p[3]);
+                showLevelCompleteDialog(winner, sb, level);
+                break;
+            }
+            case "NEXT_LEVEL":
+                statusLabel.setText("Moving to Level " + p[1] + "!");
+                break;
+            case "REPLAY_LEVEL":
+                statusLabel.setText("Replaying Level " + p[1] + "...");
+                break;
+            case "VOTE_UPDATE":
+                statusLabel.setText("Votes: " + p[1] + "/" + p[2] + " submitted");
+                break;
+            case "ERROR":
+                statusLabel.setText("Error: " + message.substring(6));
+                break;
         }
     }
 
-    private void updateScore(String scorer, int score) {
-        if (scorer.equals(myUsername)) {
-            myScore = score;
-            myScoreLabel.setText("" + myScore);
-        } else {
-            opponentName = scorer;
-            oppScore = score;
-            oppScoreLabel.setText("" + oppScore);
-        }
+    private void showLevelCompleteDialog(String winner, String scoreboard, int level) {
+        JDialog dialog = new JDialog((JFrame) SwingUtilities.getWindowAncestor(this),
+                "Level Complete!", true);
+        dialog.setUndecorated(true);
+
+        JPanel panel = new JPanel();
+        panel.setBackground(UIConstants.BG_PANEL);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBorder(new EmptyBorder(24, 36, 24, 36));
+
+        JLabel winLbl = new JLabel(winner.equals("TIE") ? "It's a Tie!" : winner + " wins!", SwingConstants.CENTER);
+        winLbl.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        winLbl.setForeground(UIConstants.ACCENT_CYAN);
+        winLbl.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel scoreLbl = new JLabel("Level " + level + " complete!", SwingConstants.CENTER);
+        scoreLbl.setFont(UIConstants.FONT_BODY);
+        scoreLbl.setForeground(UIConstants.TEXT_MUTED);
+        scoreLbl.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel voteLbl = new JLabel("Vote to continue:", SwingConstants.CENTER);
+        voteLbl.setFont(UIConstants.FONT_SMALL);
+        voteLbl.setForeground(UIConstants.TEXT_MUTED);
+        voteLbl.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        btnRow.setOpaque(false);
+
+        JButton nextBtn   = makeDialogBtn("Next Level", UIConstants.ACCENT_BLUE);
+        JButton replayBtn = makeDialogBtn("Replay", UIConstants.ACCENT_PURPLE);
+        JButton homeBtn   = makeDialogBtn("Home", new Color(80,40,40));
+
+        nextBtn.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                client.sendVote(roomId, myUsername, true);
+                dialog.dispose();
+            }
+        });
+        replayBtn.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                client.sendVote(roomId, myUsername, false);
+                dialog.dispose();
+            }
+        });
+        homeBtn.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                dialog.dispose();
+                client.quit(roomId, myUsername);
+                client.disconnect();
+                boardListener.onHomeClicked();
+            }
+        });
+
+        btnRow.add(nextBtn);
+        btnRow.add(replayBtn);
+        btnRow.add(homeBtn);
+
+        panel.add(winLbl);
+        panel.add(Box.createVerticalStrut(8));
+        panel.add(scoreLbl);
+        panel.add(Box.createVerticalStrut(12));
+        panel.add(voteLbl);
+        panel.add(Box.createVerticalStrut(10));
+        panel.add(btnRow);
+
+        dialog.setContentPane(panel);
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
-    // ---- Card Rendering ----
-
-    private void renderCard(int r, int c, String value, boolean isMatched) {
-        JButton btn = cardButtons[r][c];
-        btn.setText(value);
-        btn.setBackground(isMatched ? UIConstants.CARD_MATCHED : UIConstants.CARD_FACE);
-        btn.setForeground(new Color(30, 30, 30));
-        btn.setBorder(BorderFactory.createLineBorder(
-                isMatched ? UIConstants.CARD_MATCHED : UIConstants.ACCENT_BLUE, 2));
+    private JButton makeDialogBtn(String text, Color bg) {
+        JButton btn = new JButton(text);
+        btn.setFont(UIConstants.FONT_BUTTON);
+        btn.setForeground(Color.WHITE);
+        btn.setBackground(bg);
+        btn.setOpaque(true);
+        btn.setFocusPainted(false);
+        btn.setBorder(BorderFactory.createEmptyBorder(8,14,8,14));
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return btn;
     }
 
-    private void renderMatched(int r, int c) {
-        int idx = r * cols + c;
-        renderCard(r, c, values[idx], true);
-    }
+    private JButton makeButton(String text, Color bg) { return makeDialogBtn(text, bg); }
 
-    private void renderCardBack(int r, int c) {
-        JButton btn = cardButtons[r][c];
-        btn.setText("?");
-        btn.setBackground(UIConstants.CARD_BACK);
-        btn.setForeground(new Color(60, 90, 150));
-        btn.setBorder(BorderFactory.createLineBorder(new Color(50, 80, 140), 1));
+    private void repaintAllCards() {
+        for (JButton[] row : cardButtons)
+            for (JButton btn : row)
+                if (btn != null) btn.repaint();
     }
 }

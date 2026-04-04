@@ -150,8 +150,10 @@ public class Main {
             @Override
             public void onGameStart(String roomId, String username, GameClient client,
                                     int rows, int cols, String[] boardValues,
-                                    Card.Category category) {
-                launchMultiplayerGame(roomId, username, client, rows, cols, boardValues, category);
+                                    Card.Category category, String myColor,
+                                    String scoreboard, String firstTurnPlayer) {
+                launchMultiplayerGame(roomId, username, client, rows, cols,
+                        boardValues, category, myColor, scoreboard, firstTurnPlayer);
             }
             @Override
             public void onBack() {
@@ -226,9 +228,12 @@ public class Main {
 
     private static void launchMultiplayerGame(String roomId, String username,
                                                GameClient client, int rows, int cols,
-                                               String[] boardValues, Card.Category category) {
+                                               String[] boardValues, Card.Category category,
+                                               String myColor, String scoreboard,
+                                               String firstTurnPlayer) {
         MultiplayerBoardView mpView = new MultiplayerBoardView(
                 roomId, username, client, rows, cols, boardValues, category,
+                myColor, scoreboard, firstTurnPlayer,
                 new MultiplayerBoardView.MPBoardListener() {
                     @Override
                     public void onHomeClicked() {

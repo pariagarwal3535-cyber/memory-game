@@ -7,8 +7,6 @@ import java.net.*;
 
 /**
  * Client-side network handler for multiplayer games.
- * Connects to GameServer, sends commands, and delivers
- * server messages to a registered MessageListener.
  */
 public class GameClient {
 
@@ -31,13 +29,11 @@ public class GameClient {
         this.port = port;
     }
 
-    /**
-     * Connect to the server. Call before any other methods.
-     */
     public boolean connect(MessageListener listener) {
         this.listener = listener;
         try {
-            socket = new Socket(host, port);
+            socket = new Socket();
+            socket.connect(new InetSocketAddress(host, port), 10000);
             out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream()), true);
             connected = true;
             startListening();
@@ -49,15 +45,19 @@ public class GameClient {
     }
 
     private void startListening() {
-        listenerThread = new Thread(() -> {
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    final String msg = line;
-                    if (listener != null) listener.onMessage(msg);
+        listenerThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try (BufferedReader in = new BufferedReader(
+                        new InputStreamReader(socket.getInputStream()))) {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        final String msg = line;
+                        if (listener != null) listener.onMessage(msg);
+                    }
+                } catch (IOException e) {
+                    if (connected && listener != null) listener.onDisconnected();
                 }
-            } catch (IOException e) {
-                if (connected && listener != null) listener.onDisconnected();
             }
         });
         listenerThread.setDaemon(true);
@@ -66,16 +66,30 @@ public class GameClient {
 
     // ---- Commands ----
 
-    public void createRoom(String roomId, String username, int level, Card.Category category) {
-        send("CREATE:" + roomId + ":" + username + ":" + level + ":" + category.name());
+    public void createRoom(String roomId, String username, int level,
+                            Card.Category category, boolean isPublic) {
+        send("CREATE:" + roomId + ":" + username + ":" + level
+                + ":" + category.name() + ":" + isPublic);
     }
 
     public void joinRoom(String roomId, String username) {
         send("JOIN:" + roomId + ":" + username);
     }
 
+    public void startGame(String roomId) {
+        send("START:" + roomId);
+    }
+
     public void sendFlip(String roomId, String username, int row, int col) {
         send("FLIP:" + roomId + ":" + username + ":" + row + ":" + col);
+    }
+
+    public void sendVote(String roomId, String username, boolean wantsNext) {
+        send("VOTE:" + roomId + ":" + username + ":" + (wantsNext ? "yes" : "no"));
+    }
+
+    public void listPublicRooms() {
+        send("LIST_ROOMS");
     }
 
     public void quit(String roomId, String username) {
@@ -86,15 +100,14 @@ public class GameClient {
         if (out != null) out.println(message);
     }
 
+    public void setListener(MessageListener newListener) {
+        this.listener = newListener;
+    }
+
     public void disconnect() {
         connected = false;
         try { if (socket != null) socket.close(); } catch (IOException ignored) {}
     }
 
     public boolean isConnected() { return connected; }
-
-    /** Replace the active message listener (e.g. when handing off to the game board view). */
-    public void setListener(MessageListener newListener) {
-        this.listener = newListener;
-    }
 }
