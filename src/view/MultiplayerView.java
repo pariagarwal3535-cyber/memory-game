@@ -312,21 +312,34 @@ public class MultiplayerView extends JPanel {
         p.setOpaque(false);
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
 
-        JLabel waiting = new JLabel("Waiting for players...");
+        JLabel waiting = new JLabel("Room Created!", SwingConstants.CENTER);
         waiting.setFont(UIConstants.FONT_HEADING);
-        waiting.setForeground(UIConstants.TEXT_PRIMARY);
+        waiting.setForeground(UIConstants.ACCENT_CYAN);
         waiting.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        statusLabel = new JLabel("Share your Room ID with friends");
+        statusLabel = new JLabel("Share your Room ID with friends", SwingConstants.CENTER);
         statusLabel.setFont(UIConstants.FONT_BODY);
         statusLabel.setForeground(UIConstants.TEXT_MUTED);
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
+        JLabel hint = new JLabel(
+                "<html><div style='text-align:center'>"
+                + "When everyone has joined,<br>click <b>Start Game Now</b> to begin!"
+                + "</div></html>", SwingConstants.CENTER);
+        hint.setFont(UIConstants.FONT_SMALL);
+        hint.setForeground(UIConstants.TEXT_MUTED);
+        hint.setAlignmentX(Component.CENTER_ALIGNMENT);
+
         JButton startBtn = makeButton("Start Game Now", UIConstants.ACCENT_BLUE);
         startBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        startBtn.setPreferredSize(new Dimension(200, 48));
+        startBtn.setMaximumSize(new Dimension(200, 48));
         startBtn.addActionListener(new ActionListener() {
             @Override public void actionPerformed(ActionEvent e) {
-                if (client != null) client.startGame(roomId);
+                if (client != null && roomId != null) {
+                    statusLabel.setText("Starting game...");
+                    client.startGame(roomId);
+                }
             }
         });
 
@@ -334,18 +347,25 @@ public class MultiplayerView extends JPanel {
         cancelBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
         cancelBtn.addActionListener(new ActionListener() {
             @Override public void actionPerformed(ActionEvent e) {
-                if (client != null) client.disconnect();
+                if (client != null) {
+                    client.quit(roomId, username);
+                    client.disconnect();
+                }
+                client = null;
+                roomId = null;
                 cardLayout.show(cardPanel, "lobby");
             }
         });
 
         p.add(Box.createVerticalStrut(20));
         p.add(waiting);
-        p.add(Box.createVerticalStrut(12));
-        p.add(statusLabel);
-        p.add(Box.createVerticalStrut(20));
-        p.add(startBtn);
         p.add(Box.createVerticalStrut(10));
+        p.add(statusLabel);
+        p.add(Box.createVerticalStrut(8));
+        p.add(hint);
+        p.add(Box.createVerticalStrut(24));
+        p.add(startBtn);
+        p.add(Box.createVerticalStrut(12));
         p.add(cancelBtn);
         return p;
     }
@@ -391,14 +411,28 @@ public class MultiplayerView extends JPanel {
         switch (parts[0]) {
             case "CREATED":
                 myColor = parts[2];
-                statusLabel.setText("Room: " + parts[1] + "  |  Waiting for players... (Start when ready)");
+                roomId = parts[1];
+                statusLabel.setText(parts[1]);  // Show room ID prominently
                 break;
             case "JOINED":
                 myColor = parts[2];
-                statusLabel.setText("Joined room " + parts[1] + "! Waiting for host to start...");
+                roomId = parts[1];
+                statusLabel.setText(parts[1]);  // Show room ID
                 break;
             case "PLAYER_JOINED":
-                statusLabel.setText(parts[1] + " joined! " + extractPlayerCount(message) + " players in room.");
+                // Auto-start when a second player joins (host side)
+                if (client != null && roomId != null) {
+                    // Small delay then auto start
+                    javax.swing.Timer autoStart = new javax.swing.Timer(1500, new ActionListener() {
+                        @Override public void actionPerformed(ActionEvent e) {
+                            if (client != null && client.isConnected()) {
+                                client.startGame(roomId);
+                            }
+                        }
+                    });
+                    autoStart.setRepeats(false);
+                    autoStart.start();
+                }
                 break;
             case "START": {
                 // Format: START:<rows>:<cols>:<values>:<scoreboard>:<firstTurn>

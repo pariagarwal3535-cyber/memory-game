@@ -166,6 +166,8 @@ public class GameServer {
         room.addPlayer(host, handler);
         rooms.put(roomId, room);
         if (isPublic) publicRooms.add(roomId);
+        System.out.println("[Server] Room created: " + roomId + " by " + host
+                + " (public=" + isPublic + ")");
         return "CREATED:" + roomId + ":" + room.playerColors.get(host);
     }
 
@@ -195,11 +197,18 @@ public class GameServer {
 
     synchronized void startGame(String roomId) {
         RoomState room = rooms.get(roomId);
-        if (room == null || room.players.size() < 1) return;
+        if (room == null || room.players.isEmpty()) {
+            System.out.println("[Server] Cannot start: room null or no players");
+            return;
+        }
+        System.out.println("[Server] Starting game in room " + roomId
+                + " with " + room.players.size() + " players");
         room.started  = true;
         room.board    = new GameBoard(room.level, room.category);
         room.currentTurnIndex = 0;
         room.levelVotes.clear();
+        // Reset scores for new game
+        for (String p : room.players) room.scores.put(p, 0);
 
         StringBuilder sb = new StringBuilder();
         sb.append("START:").append(room.board.getRows()).append(":").append(room.board.getCols()).append(":");
