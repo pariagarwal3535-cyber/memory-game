@@ -150,6 +150,31 @@ public class Main {
                 launchMultiplayerGame(roomId, username, client, rows, cols,
                         boardValues, category, myColor, scoreboard, firstTurnPlayer);
             }
+            @Override
+            public void onQuizStart(String roomId, String username, GameClient client,
+                                    String myColor, String scoreboard,
+                                    String firstTurnPlayer, Question.Subject subject) {
+                // For quiz multiplayer - launch quiz with same players
+                // Players race to answer - server tracks who answers first
+                // For now launch a standard quiz session
+                java.util.List<quiz.Question> questions = quiz.QuizBank.getRandom(subject, 10);
+                quiz.QuizController qc = new quiz.QuizController(questions);
+                QuizGameView qv = new QuizGameView(qc, new QuizGameView.QuizGameListener() {
+                    @Override public void onQuizComplete(quiz.QuizController ctrl) {
+                        authController.updateCurrentUser(ctrl.getScore(), 1);
+                        QuizResultView rv = new QuizResultView(ctrl,
+                                new QuizResultView.ResultListener() {
+                                    @Override public void onPlayAgain() { goHome(); }
+                                    @Override public void onHome()      { goHome(); }
+                                });
+                        replaceScreen(SCREEN_QUIZ_RES, rv);
+                        showScreen(SCREEN_QUIZ_RES);
+                    }
+                    @Override public void onHome() { goHome(); }
+                });
+                replaceScreen(SCREEN_QUIZ, qv);
+                showScreen(SCREEN_QUIZ);
+            }
             @Override public void onBack() { goHome(); }
         });
     }

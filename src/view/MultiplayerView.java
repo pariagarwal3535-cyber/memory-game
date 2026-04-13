@@ -1,6 +1,9 @@
 package view;
 
 import model.Card;
+import quiz.Question;
+import quiz.QuizBank;
+import quiz.QuizController;
 import network.GameClient;
 import util.UIConstants;
 
@@ -23,6 +26,9 @@ public class MultiplayerView extends JPanel {
                          int rows, int cols, String[] boardValues,
                          Card.Category category, String myColor,
                          String scoreboard, String firstTurnPlayer);
+        void onQuizStart(String roomId, String username, GameClient client,
+                         String myColor, String scoreboard, String firstTurnPlayer,
+                         Question.Subject subject);
         void onBack();
     }
 
@@ -38,6 +44,7 @@ public class MultiplayerView extends JPanel {
     private String myColor = "#3498DB";
     private Card.Category selectedCategory = Card.Category.EMOJIS;
     private int selectedLevel = 1;
+    private boolean quizMode = false;  // true = quiz multiplayer, false = card game
 
     // UI
     private CardLayout cardLayout;
@@ -160,8 +167,25 @@ public class MultiplayerView extends JPanel {
         publicCheck.setForeground(UIConstants.TEXT_MUTED);
         publicCheck.setFont(UIConstants.FONT_SMALL);
 
+        // Game mode selection
+        JLabel modeLbl = new JLabel("Mode:");
+        modeLbl.setForeground(UIConstants.TEXT_MUTED);
+        modeLbl.setFont(UIConstants.FONT_SMALL);
+        JComboBox<String> modeBox = new JComboBox<String>(
+                new String[]{"Card Game", "Quiz"});
+        styleCombo(modeBox);
+        modeBox.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                quizMode = modeBox.getSelectedIndex() == 1;
+                // Disable category/level if quiz mode
+                levelBox.setEnabled(!quizMode);
+                catBox.setEnabled(!quizMode);
+            }
+        });
+
         optRow.add(lvlLbl); optRow.add(levelBox);
         optRow.add(catLbl); optRow.add(catBox);
+        optRow.add(modeLbl); optRow.add(modeBox);
         optRow.add(publicCheck);
 
         // Error label
@@ -522,9 +546,15 @@ public class MultiplayerView extends JPanel {
 
             String color = (myColor != null && !myColor.isEmpty()) ? myColor : "#3498DB";
 
-            listener.onGameStart(roomId, username, client,
-                    rows, cols, values, selectedCategory,
-                    color, scoreboard, firstTurn);
+            if (quizMode) {
+                listener.onQuizStart(roomId, username, client,
+                        color, scoreboard, firstTurn,
+                        Question.Subject.GK);
+            } else {
+                listener.onGameStart(roomId, username, client,
+                        rows, cols, values, selectedCategory,
+                        color, scoreboard, firstTurn);
+            }
 
         } catch (Exception e) {
             System.err.println("[Client] Failed to parse GAMESTART: " + e.getMessage());

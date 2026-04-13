@@ -2,6 +2,7 @@ package view;
 
 import model.Card;
 import network.GameClient;
+import util.ImageLoader;
 import util.UIConstants;
 
 import javax.swing.*;
@@ -269,12 +270,8 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 g2.setColor(mc.brighter());
                 g2.setStroke(new BasicStroke(2f));
                 g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
-                g2.setColor(Color.WHITE);
-                g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h * 0.36)));
-                FontMetrics fm = g2.getFontMetrics();
-                String val = values[idx];
-                g2.drawString(val, (w - fm.stringWidth(val)) / 2,
-                        (h + fm.getAscent() - fm.getDescent()) / 2);
+                // Draw image using ImageLoader
+                drawCardImage(g2, idx, w, h);
 
             } else if (flipped[idx]) {
                 g2.setColor(UIConstants.CARD_FACE);
@@ -282,12 +279,8 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 g2.setColor(UIConstants.ACCENT_BLUE);
                 g2.setStroke(new BasicStroke(2.5f));
                 g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
-                g2.setColor(new Color(30, 30, 30));
-                g2.setFont(new Font("Segoe UI Emoji", Font.BOLD, (int)(h * 0.36)));
-                FontMetrics fm = g2.getFontMetrics();
-                String val = values[idx];
-                g2.drawString(val, (w - fm.stringWidth(val)) / 2,
-                        (h + fm.getAscent() - fm.getDescent()) / 2);
+                // Draw image using ImageLoader
+                drawCardImage(g2, idx, w, h);
 
             } else {
                 g2.setColor(UIConstants.CARD_BACK);
@@ -307,6 +300,19 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 g2.draw(new RoundRectangle2D.Float(2, 2, w-4, h-4, arc, arc));
             }
             g2.dispose();
+        }
+
+        private void drawCardImage(Graphics2D g2, int idx, int w, int h) {
+            String catName  = category.name().toLowerCase();
+            String filename = values[idx];
+            int    imgSize  = Math.min(w, h) - 12;
+            if (imgSize < 10) return;
+            javax.swing.ImageIcon icon = ImageLoader.loadImage(catName, filename, imgSize);
+            if (icon != null && icon.getIconWidth() > 0) {
+                int x = (w - icon.getIconWidth())  / 2;
+                int y = (h - icon.getIconHeight()) / 2;
+                icon.paintIcon(this, g2, x, y);
+            }
         }
     }
 
