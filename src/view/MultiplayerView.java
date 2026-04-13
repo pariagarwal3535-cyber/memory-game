@@ -27,8 +27,8 @@ public class MultiplayerView extends JPanel {
     }
 
     // ---- Server config (auto-filled) ----
-    private static final String SERVER_HOST = "hopper.proxy.rlwy.net";
-    private static final int    SERVER_PORT = 14180;
+    private static final String SERVER_HOST = "crossover.proxy.rlwy.net";
+    private static final int    SERVER_PORT = 31468;
 
     private final MultiplayerListener listener;
     private final String username;
