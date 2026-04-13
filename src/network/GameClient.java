@@ -6,7 +6,8 @@ import java.io.*;
 import java.net.*;
 
 /**
- * Client-side network handler for multiplayer games.
+ * Client-side socket handler.
+ * Uses the simplified protocol with GAMESTART keyword.
  */
 public class GameClient {
 
@@ -19,10 +20,10 @@ public class GameClient {
     private PrintWriter out;
     private Thread listenerThread;
     private MessageListener listener;
-    private boolean connected;
+    private boolean connected = false;
 
     private final String host;
-    private final int port;
+    private final int    port;
 
     public GameClient(String host, int port) {
         this.host = host;
@@ -39,15 +40,15 @@ public class GameClient {
             startListening();
             return true;
         } catch (IOException e) {
-            System.err.println("[Client] Cannot connect: " + e.getMessage());
+            System.err.println("[Client] Cannot connect to " + host + ":" + port
+                    + " - " + e.getMessage());
             return false;
         }
     }
 
     private void startListening() {
         listenerThread = new Thread(new Runnable() {
-            @Override
-            public void run() {
+            @Override public void run() {
                 try (BufferedReader in = new BufferedReader(
                         new InputStreamReader(socket.getInputStream()))) {
                     String line;
@@ -66,47 +67,44 @@ public class GameClient {
 
     // ---- Commands ----
 
-    public void createRoom(String roomId, String username, int level,
-                            Card.Category category, boolean isPublic) {
-        send("CREATE:" + roomId + ":" + username + ":" + level
-                + ":" + category.name() + ":" + isPublic);
+    public void createRoom(String roomId, String user, int level,
+                            Card.Category cat, boolean isPublic) {
+        send("CREATE:" + roomId + ":" + user + ":" + level
+                + ":" + cat.name() + ":" + isPublic);
     }
 
-    public void joinRoom(String roomId, String username) {
-        send("JOIN:" + roomId + ":" + username);
+    public void joinRoom(String roomId, String user) {
+        send("JOIN:" + roomId + ":" + user);
     }
 
     public void startGame(String roomId) {
-        send("START:" + roomId);
+        send("STARTGAME:" + roomId);
     }
 
-    public void sendFlip(String roomId, String username, int row, int col) {
-        send("FLIP:" + roomId + ":" + username + ":" + row + ":" + col);
+    public void sendFlip(String roomId, String user, int row, int col) {
+        send("FLIP:" + roomId + ":" + user + ":" + row + ":" + col);
     }
 
-    public void sendVote(String roomId, String username, boolean wantsNext) {
-        send("VOTE:" + roomId + ":" + username + ":" + (wantsNext ? "yes" : "no"));
+    public void sendVote(String roomId, String user, boolean next) {
+        send("VOTE:" + roomId + ":" + user + ":" + (next ? "yes" : "no"));
     }
 
-    public void listPublicRooms() {
-        send("LIST_ROOMS");
+    public void listRooms() { send("LIST"); }
+
+    public void quit(String roomId, String user) {
+        send("QUIT:" + roomId + ":" + user);
     }
 
-    public void quit(String roomId, String username) {
-        send("QUIT:" + roomId + ":" + username);
+    private synchronized void send(String msg) {
+        if (out != null) out.println(msg);
     }
 
-    private synchronized void send(String message) {
-        if (out != null) out.println(message);
-    }
-
-    public void setListener(MessageListener newListener) {
-        this.listener = newListener;
-    }
+    public void setListener(MessageListener l) { this.listener = l; }
 
     public void disconnect() {
         connected = false;
-        try { if (socket != null) socket.close(); } catch (IOException ignored) {}
+        try { if (socket != null) socket.close(); }
+        catch (IOException ignored) {}
     }
 
     public boolean isConnected() { return connected; }

@@ -344,7 +344,7 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
     private void processMessage(String message) {
         String[] p = message.split(":");
         switch (p[0]) {
-            case "FLIP_ACK": {
+            case "FLIP": {
                 int r = Integer.parseInt(p[2]);
                 int c = Integer.parseInt(p[3]);
                 flipped[r * cols + c] = true;
@@ -378,15 +378,18 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 break;
             }
             case "MISS": {
-                int r1 = Integer.parseInt(p[2]), c1 = Integer.parseInt(p[3]);
-                int r2 = Integer.parseInt(p[4]), c2 = Integer.parseInt(p[5]);
-                statusLabel.setText(p[1] + " missed...");
+                // MISS:username:nextTurnPlayer
+                statusLabel.setText(p[1] + " missed!");
+                // Hide flipped cards after delay
                 Timer t = new Timer(900, new ActionListener() {
                     @Override public void actionPerformed(ActionEvent e) {
-                        flipped[r1*cols+c1] = false;
-                        flipped[r2*cols+c2] = false;
-                        cardButtons[r1][c1].repaint();
-                        cardButtons[r2][c2].repaint();
+                        // Reset all non-matched flipped cards
+                        for (int ri = 0; ri < rows; ri++)
+                            for (int ci = 0; ci < cols; ci++)
+                                if (flipped[ri*cols+ci] && !matched[ri*cols+ci]) {
+                                    flipped[ri*cols+ci] = false;
+                                    cardButtons[ri][ci].repaint();
+                                }
                     }
                 });
                 t.setRepeats(false);
@@ -411,32 +414,32 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
                 statusLabel.setText(p[1] + " joined the room!");
                 break;
             }
-            case "PLAYER_LEFT": {
+            case "PLAYERLEFT": {
                 int sbStart = "PLAYER_LEFT:".length() + p[1].length() + 1;
                 String sb = sbStart < message.length() ? message.substring(sbStart) : "";
                 if (!sb.isEmpty()) buildScorePanel(sb, "");
                 statusLabel.setText(p[1] + " left the game.");
                 break;
             }
-            case "LEVEL_COMPLETE": {
-                // LEVEL_COMPLETE:<winner>:<scoreboard>:<level>
-                String winner = p[1];
+            case "LEVELEND": {
+                // LEVELEND:winner:scoreboard:level
+                String winner = p.length >= 2 ? p[1] : "TIE";
                 String levelStr = p[p.length - 1];
                 int level = 1;
                 try { level = Integer.parseInt(levelStr); } catch (Exception ex) {}
-                int sbStart = "LEVEL_COMPLETE:".length() + p[1].length() + 1;
+                int sbStart = "LEVELEND:".length() + winner.length() + 1;
                 int sbEnd   = message.lastIndexOf(":");
                 String sb   = (sbStart < sbEnd) ? message.substring(sbStart, sbEnd) : "";
                 showLevelCompleteDialog(winner, sb, level);
                 break;
             }
-            case "NEXT_LEVEL":
+            case "NEXTLEVEL":
                 statusLabel.setText("Moving to Level " + p[1] + "!");
                 break;
-            case "REPLAY_LEVEL":
+            case "REPLAYLEVEL":
                 statusLabel.setText("Replaying Level " + p[1] + "...");
                 break;
-            case "VOTE_UPDATE":
+            case "VOTEUPDATE":
                 statusLabel.setText("Votes: " + p[1] + "/" + p[2] + " submitted");
                 break;
             case "ERROR":
