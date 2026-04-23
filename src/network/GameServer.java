@@ -485,11 +485,13 @@ public class GameServer {
             scheduleTimeout(r, PHASE2_SECONDS, 2, r.currentQIndex);
 
         } else if (phase == 2) {
+            r.questionResolved = true;
             if (r.currentBuzzUser == null) {
-                // Nobody buzzed - just reveal and move on
+                // Nobody buzzed - reveal answer, then move on
+                broadcastAll(roomId, "REVEAL:" + q.getCorrectIndex());
                 advanceAfterQuestion(r, q.getCorrectIndex());
             } else {
-                // Buzzer user timed out on their answer - treat as wrong
+                // Buzzer user timed out on their answer - treat as wrong, reveal answer
                 applyScore(r, r.currentBuzzUser, SCORE_WRONG);
                 broadcastAll(roomId, "ANSWERED:" + r.currentBuzzUser
                         + ":-1:0:" + r.scoreboard()
@@ -523,11 +525,15 @@ public class GameServer {
                 advanceAfterQuestion(r, q.getCorrectIndex());
             } else {
                 applyScore(r, user, SCORE_WRONG);
+                // DON'T reveal correct answer yet - send -1 as correctIdx so
+                // clients don't highlight anything. Steal round gets a clean question.
                 broadcastAll(roomId, "ANSWERED:" + user + ":" + optIdx + ":0:"
-                        + r.scoreboard() + ":" + q.getCorrectIndex());
+                        + r.scoreboard() + ":-1");
                 // Open steal round
                 if (r.players.size() <= 1) {
                     r.questionResolved = true;
+                    // Solo - reveal correct answer now on final resolution
+                    broadcastAll(roomId, "REVEAL:" + q.getCorrectIndex());
                     advanceAfterQuestion(r, q.getCorrectIndex());
                     return;
                 }

@@ -434,12 +434,14 @@ public class MultiplayerQuizView extends JPanel
         stopCountdown();
         correctIndexRevealed = correctIdx;
 
-        // Highlight correct vs chosen
+        // Only paint the board on FINAL resolution (correctIdx >= 0).
+        // If correctIdx == -1 the question is going to a steal round -
+        // leave the buttons neutral so the next player sees a clean slate.
         if (correctIdx >= 0 && correctIdx < 4) {
             optionButtons[correctIdx].setBackground(new Color(35, 160, 95));
-        }
-        if (optIdx >= 0 && optIdx < 4 && optIdx != correctIdx) {
-            optionButtons[optIdx].setBackground(new Color(180, 55, 55));
+            if (optIdx >= 0 && optIdx < 4 && optIdx != correctIdx) {
+                optionButtons[optIdx].setBackground(new Color(180, 55, 55));
+            }
         }
 
         setQuestionEnabled(false);
@@ -454,6 +456,19 @@ public class MultiplayerQuizView extends JPanel
         } else {
             feedbackLabel.setText(user + " is wrong  -2");
             feedbackLabel.setForeground(new Color(230, 120, 120));
+        }
+    }
+
+    private void onReveal(int correctIdx) {
+        // Late reveal after steal round expires with no correct answer
+        if (correctIdx >= 0 && correctIdx < 4) {
+            optionButtons[correctIdx].setBackground(new Color(35, 160, 95));
+        }
+        setQuestionEnabled(false);
+        buzzButton.setEnabled(false);
+        if (feedbackLabel.getText() == null || feedbackLabel.getText().trim().isEmpty()) {
+            feedbackLabel.setText("Answer revealed");
+            feedbackLabel.setForeground(UIConstants.TEXT_MUTED);
         }
     }
 
@@ -567,6 +582,12 @@ public class MultiplayerQuizView extends JPanel
                     onAnswered(user, optIdx, correct, correctIdx);
                     rebuildScoresPanel(scoreboard);
                 } catch (NumberFormatException ignored) {}
+                break;
+            }
+            case "REVEAL": {
+                // REVEAL:correctIdx  (sent when steal round ends without a correct answer)
+                try { onReveal(Integer.parseInt(rest)); }
+                catch (NumberFormatException ignored) {}
                 break;
             }
             case "QUIZEND": {
