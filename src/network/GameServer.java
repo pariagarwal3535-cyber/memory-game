@@ -290,6 +290,7 @@ public class GameServer {
                 r.firstFlipUser = null;
                 r.nextTurn();
                 broadcastAll(roomId, "MISS:" + user + ":" + r.currentTurn());
+                broadcastAll(roomId, "TURN:" + r.currentTurn());
             }
         }
     }

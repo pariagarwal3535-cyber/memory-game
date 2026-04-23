@@ -1,4 +1,13 @@
-
+# Compiled output
 bin/
 *.class
+
+# VS Code
 .vscode/
+
+# Data files (don't upload user data)
+data/users.txt
+
+# OS files
+.DS_Store
+Thumbs.db
