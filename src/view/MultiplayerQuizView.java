@@ -312,22 +312,27 @@ public class MultiplayerQuizView extends JPanel
 
     // =============== User actions ===============
 
+    private boolean answerSent = false;  // guard against double-clicks on the same question
+
     private void onOptionClick(int idx) {
+        if (answerSent) return;
         if (currentPhase == 1 && myUsername.equals(currentPrimary)) {
-            client.sendAnswer(roomId, myUsername, idx);
+            answerSent = true;
             setQuestionEnabled(false);
+            client.sendAnswer(roomId, myUsername, idx);
         } else if (currentPhase == 2 && myUsername.equals(currentBuzzer)) {
-            client.sendAnswer(roomId, myUsername, idx);
+            answerSent = true;
             setQuestionEnabled(false);
+            client.sendAnswer(roomId, myUsername, idx);
         }
     }
 
     private void onBuzzClick() {
         if (currentPhase == 2 && !myUsername.equals(currentPrimary)
                 && currentBuzzer == null) {
-            client.sendBuzz(roomId, myUsername);
             buzzButton.setEnabled(false);
             buzzButton.setText("Buzzed!");
+            client.sendBuzz(roomId, myUsername);
         }
     }
 
@@ -363,6 +368,7 @@ public class MultiplayerQuizView extends JPanel
         currentBuzzer = null;
         correctIndexRevealed = -1;
         currentPrimary = primary;
+        answerSent = false;          // new question - re-allow answering
 
         questionLabel.setText("<html><div style='text-align:center;'>"
                 + escape(question) + "</div></html>");
@@ -391,6 +397,7 @@ public class MultiplayerQuizView extends JPanel
     private void showPhase2(int seconds) {
         currentPhase = 2;
         currentBuzzer = null;
+        answerSent = false;          // steal round - new answer opportunity
 
         boolean iAmPrimary = myUsername.equals(currentPrimary);
         setQuestionEnabled(false);  // disabled until someone buzzes

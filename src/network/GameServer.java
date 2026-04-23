@@ -53,7 +53,7 @@ public class GameServer {
             new CopyOnWriteArrayList<ClientHandler>();
 
     private final ScheduledExecutorService scheduler =
-            Executors.newScheduledThreadPool(2);
+            Executors.newScheduledThreadPool(4);
 
     private ServerSocket serverSocket;
     private boolean running;
@@ -79,6 +79,7 @@ public class GameServer {
         List<Question> questions = new ArrayList<Question>();
         int currentQIndex = -1;
         int currentPhase  = 0;   // 0 = between questions, 1 = primary, 2 = steal
+        boolean questionResolved = false; // once true, no more phase transitions
         String currentBuzzUser = null;   // whoever has the floor in phase 2
         Set<String> phase2Answered = new HashSet<String>(); // not used for fair steal
         ScheduledFuture<?> currentTimer;
@@ -315,7 +316,7 @@ public class GameServer {
         // Send the first question after a short delay so clients can swap UI
         scheduler.schedule(new Runnable() {
             @Override public void run() { nextQuestion(r.roomId); }
-        }, 1500, TimeUnit.MILLISECONDS);
+        }, 600, TimeUnit.MILLISECONDS);
     }
 
     // ---- Card game handlers (unchanged behavior) ----
@@ -426,6 +427,7 @@ public class GameServer {
             return;
         }
         r.currentPhase = 1;
+        r.questionResolved = false;
         r.currentBuzzUser = null;
         r.phase2Answered.clear();
 
@@ -462,6 +464,8 @@ public class GameServer {
         // Only act if question hasn't moved on
         if (r.currentQIndex != qIdxSnapshot) return;
         if (r.currentPhase != phase) return;
+        // HARD GUARD: if question has been resolved by an answer, never fire phase2
+        if (r.questionResolved) return;
 
         Question q = r.currentQuestion();
         if (q == null) return;
@@ -510,6 +514,9 @@ public class GameServer {
             }
             boolean correct = (optIdx == q.getCorrectIndex());
             if (correct) {
+                // Mark resolved FIRST so a racing timeout can't fire phase2
+                r.questionResolved = true;
+                if (r.currentTimer != null) { r.currentTimer.cancel(false); r.currentTimer = null; }
                 applyScore(r, user, SCORE_CORRECT);
                 broadcastAll(roomId, "ANSWERED:" + user + ":" + optIdx + ":1:"
                         + r.scoreboard() + ":" + q.getCorrectIndex());
@@ -520,6 +527,7 @@ public class GameServer {
                         + r.scoreboard() + ":" + q.getCorrectIndex());
                 // Open steal round
                 if (r.players.size() <= 1) {
+                    r.questionResolved = true;
                     advanceAfterQuestion(r, q.getCorrectIndex());
                     return;
                 }
@@ -537,6 +545,9 @@ public class GameServer {
                 if (h != null) h.send("BLOCKED:Not your buzz");
                 return;
             }
+            // Mark resolved FIRST to block the timeout from firing again
+            r.questionResolved = true;
+            if (r.currentTimer != null) { r.currentTimer.cancel(false); r.currentTimer = null; }
             boolean correct = (optIdx == q.getCorrectIndex());
             if (correct) applyScore(r, user, SCORE_CORRECT);
             else         applyScore(r, user, SCORE_WRONG);
@@ -585,7 +596,7 @@ public class GameServer {
         final String roomId = r.roomId;
         scheduler.schedule(new Runnable() {
             @Override public void run() { nextQuestion(roomId); }
-        }, 2500, TimeUnit.MILLISECONDS);
+        }, 1200, TimeUnit.MILLISECONDS);
     }
 
     private void endQuiz(RoomState r) {
