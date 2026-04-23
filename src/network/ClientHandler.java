@@ -3,17 +3,21 @@ package network;
 import java.io.*;
 import java.net.*;
 import model.Card;
+import quiz.Question;
 
 /**
  * Handles one connected client on the server side.
- * Updated protocol uses GAMESTART instead of START to avoid conflicts.
+ * Protocol uses GAMESTART (card game) and QUIZSTART (quiz game).
  *
  * Commands from client:
- *   CREATE:roomId:username:level:category:isPublic
+ *   CREATE:roomId:username:level:category:isPublic        (card room)
+ *   CREATE_QUIZ:roomId:username:subject:qCount:isPublic   (quiz room)   NEW
  *   JOIN:roomId:username
  *   STARTGAME:roomId
- *   FLIP:roomId:username:row:col
- *   VOTE:roomId:username:yes/no
+ *   FLIP:roomId:username:row:col                          (card game)
+ *   ANSWER:roomId:username:optIdx                         (quiz)        NEW
+ *   BUZZ:roomId:username                                  (quiz)        NEW
+ *   VOTE:roomId:username:yes/no                           (card game)
  *   LIST
  *   QUIT:roomId:username
  */
@@ -70,6 +74,19 @@ public class ClientHandler implements Runnable {
                 send(server.createRoom(roomId, username, level, cat, pub, this));
                 break;
             }
+            case "CREATE_QUIZ": {
+                // CREATE_QUIZ:roomId:username:subject:qCount:isPublic
+                if (p.length < 6) { send("ERROR:Invalid CREATE_QUIZ"); return; }
+                roomId   = p[1];
+                username = p[2];
+                Question.Subject subj = Question.Subject.GK;
+                try { subj = Question.Subject.valueOf(p[3]); } catch (Exception e) {}
+                int qCount = 10;
+                try { qCount = Integer.parseInt(p[4]); } catch (Exception e) {}
+                boolean pub = "true".equals(p[5]);
+                send(server.createQuizRoom(roomId, username, subj, qCount, pub, this));
+                break;
+            }
             case "JOIN": {
                 // JOIN:roomId:username
                 if (p.length < 3) { send("ERROR:Invalid JOIN"); return; }
@@ -91,6 +108,20 @@ public class ClientHandler implements Runnable {
                     server.handleFlip(p[1], p[2],
                             Integer.parseInt(p[3]), Integer.parseInt(p[4]));
                 } catch (NumberFormatException e) {}
+                break;
+            }
+            case "ANSWER": {
+                // ANSWER:roomId:username:optIdx
+                if (p.length < 4) return;
+                try {
+                    server.handleAnswer(p[1], p[2], Integer.parseInt(p[3]));
+                } catch (NumberFormatException e) {}
+                break;
+            }
+            case "BUZZ": {
+                // BUZZ:roomId:username
+                if (p.length < 3) return;
+                server.handleBuzz(p[1], p[2]);
                 break;
             }
             case "VOTE": {

@@ -1,13 +1,14 @@
 package network;
 
 import model.Card;
+import quiz.Question;
 
 import java.io.*;
 import java.net.*;
 
 /**
  * Client-side socket handler.
- * Uses the simplified protocol with GAMESTART keyword.
+ * Now supports both card-game and quiz-game commands.
  */
 public class GameClient {
 
@@ -65,20 +66,12 @@ public class GameClient {
         listenerThread.start();
     }
 
-    // ---- Commands ----
+    // ---- Card game commands ----
 
     public void createRoom(String roomId, String user, int level,
                             Card.Category cat, boolean isPublic) {
         send("CREATE:" + roomId + ":" + user + ":" + level
                 + ":" + cat.name() + ":" + isPublic);
-    }
-
-    public void joinRoom(String roomId, String user) {
-        send("JOIN:" + roomId + ":" + user);
-    }
-
-    public void startGame(String roomId) {
-        send("STARTGAME:" + roomId);
     }
 
     public void sendFlip(String roomId, String user, int row, int col) {
@@ -87,6 +80,35 @@ public class GameClient {
 
     public void sendVote(String roomId, String user, boolean next) {
         send("VOTE:" + roomId + ":" + user + ":" + (next ? "yes" : "no"));
+    }
+
+    // ---- Quiz game commands ----
+
+    public void createQuizRoom(String roomId, String user,
+                                Question.Subject subject, int questionCount,
+                                boolean isPublic) {
+        send("CREATE_QUIZ:" + roomId + ":" + user
+                + ":" + subject.name()
+                + ":" + questionCount
+                + ":" + isPublic);
+    }
+
+    public void sendAnswer(String roomId, String user, int optionIndex) {
+        send("ANSWER:" + roomId + ":" + user + ":" + optionIndex);
+    }
+
+    public void sendBuzz(String roomId, String user) {
+        send("BUZZ:" + roomId + ":" + user);
+    }
+
+    // ---- Shared commands ----
+
+    public void joinRoom(String roomId, String user) {
+        send("JOIN:" + roomId + ":" + user);
+    }
+
+    public void startGame(String roomId) {
+        send("STARTGAME:" + roomId);
     }
 
     public void listRooms() { send("LIST"); }

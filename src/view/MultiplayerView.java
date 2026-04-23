@@ -2,8 +2,6 @@ package view;
 
 import model.Card;
 import quiz.Question;
-import quiz.QuizBank;
-import quiz.QuizController;
 import network.GameClient;
 import util.UIConstants;
 
@@ -14,10 +12,9 @@ import java.awt.event.*;
 import java.util.Random;
 
 /**
- * Multiplayer lobby - completely rewritten for reliability.
- * Auto-fills server address and port.
- * Shows public rooms list.
- * Simple create/join flow.
+ * Multiplayer lobby.
+ * Supports both card-game rooms and quiz rooms.
+ * Auto-fills server address.
  */
 public class MultiplayerView extends JPanel {
 
@@ -27,7 +24,8 @@ public class MultiplayerView extends JPanel {
                          Card.Category category, String myColor,
                          String scoreboard, String firstTurnPlayer);
         void onQuizStart(String roomId, String username, GameClient client,
-                         String myColor, String scoreboard, String firstTurnPlayer,
+                         int totalQuestions, String myColor,
+                         String scoreboard, String firstTurnPlayer,
                          Question.Subject subject);
         void onBack();
     }
@@ -42,20 +40,30 @@ public class MultiplayerView extends JPanel {
     private GameClient client;
     private String roomId;
     private String myColor = "#3498DB";
-    private boolean isHost = false;  // Track if current user is host
+    private boolean isHost = false;
     private Card.Category selectedCategory = Card.Category.EMOJIS;
     private int selectedLevel = 1;
-    private boolean quizMode = false;  // true = quiz multiplayer, false = card game
+    private boolean quizMode = false;
+    private Question.Subject selectedSubject = Question.Subject.GK;
+    private int selectedQuestionCount = 10;
+    private int totalQuestionsFromServer = 10;
 
     // UI
     private CardLayout cardLayout;
     private JPanel     cardPanel;
     private JLabel     statusLabel;
-    private JLabel     hostStatusLabel;  // Show host status
-    private JButton    startBtn;  // Store reference for enable/disable
+    private JLabel     hostStatusLabel;
+    private JButton    startBtn;
     private JTextField roomField;
     private JLabel     errorLabel;
     private JPanel     roomListPanel;
+
+    // Mode-specific controls
+    private JComboBox<Integer> levelBox;
+    private JComboBox<String>  catBox;
+    private JComboBox<String>  subjectBox;
+    private JComboBox<Integer> qCountBox;
+    private JLabel levelLbl, catLbl, subjectLbl, qCountLbl;
 
     public MultiplayerView(String username, MultiplayerListener listener) {
         this.username = username;
@@ -107,14 +115,12 @@ public class MultiplayerView extends JPanel {
         p.setOpaque(false);
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
 
-        // Server status (auto-filled, read only)
         JLabel serverInfo = new JLabel("Server: " + SERVER_HOST + ":" + SERVER_PORT
                 + "  [Auto-connected]");
         serverInfo.setFont(UIConstants.FONT_SMALL);
         serverInfo.setForeground(UIConstants.SUCCESS_GREEN);
         serverInfo.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        // Room ID field
         JLabel roomLbl = new JLabel("Room ID  (leave empty to auto-generate)");
         roomLbl.setFont(UIConstants.FONT_SMALL);
         roomLbl.setForeground(UIConstants.TEXT_MUTED);
@@ -131,15 +137,35 @@ public class MultiplayerView extends JPanel {
         roomField.setMaximumSize(new Dimension(500, 38));
         roomField.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        // Options row
-        JPanel optRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        optRow.setOpaque(false);
-        optRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        // Options row 1: mode
+        JPanel modeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        modeRow.setOpaque(false);
+        modeRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JLabel lvlLbl = new JLabel("Level:");
-        lvlLbl.setForeground(UIConstants.TEXT_MUTED);
-        lvlLbl.setFont(UIConstants.FONT_SMALL);
-        JComboBox<Integer> levelBox = new JComboBox<Integer>();
+        JLabel modeLbl = new JLabel("Mode:");
+        modeLbl.setForeground(UIConstants.TEXT_MUTED);
+        modeLbl.setFont(UIConstants.FONT_SMALL);
+        final JComboBox<String> modeBox = new JComboBox<String>(
+                new String[]{"Card Game", "Quiz"});
+        styleCombo(modeBox);
+
+        JCheckBox publicCheck = new JCheckBox("Make room public");
+        publicCheck.setOpaque(false);
+        publicCheck.setForeground(UIConstants.TEXT_MUTED);
+        publicCheck.setFont(UIConstants.FONT_SMALL);
+
+        modeRow.add(modeLbl); modeRow.add(modeBox);
+        modeRow.add(publicCheck);
+
+        // Options row 2: card-game specific (level + category)
+        JPanel cardOptsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        cardOptsRow.setOpaque(false);
+        cardOptsRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        levelLbl = new JLabel("Level:");
+        levelLbl.setForeground(UIConstants.TEXT_MUTED);
+        levelLbl.setFont(UIConstants.FONT_SMALL);
+        levelBox = new JComboBox<Integer>();
         for (int i = 1; i <= 10; i++) levelBox.addItem(i);
         styleCombo(levelBox);
         levelBox.addActionListener(new ActionListener() {
@@ -148,10 +174,10 @@ public class MultiplayerView extends JPanel {
             }
         });
 
-        JLabel catLbl = new JLabel("Category:");
+        catLbl = new JLabel("Category:");
         catLbl.setForeground(UIConstants.TEXT_MUTED);
         catLbl.setFont(UIConstants.FONT_SMALL);
-        JComboBox<String> catBox = new JComboBox<String>(
+        catBox = new JComboBox<String>(
                 new String[]{"Emojis","Animals","Fruits","Shapes"});
         styleCombo(catBox);
         catBox.addActionListener(new ActionListener() {
@@ -165,31 +191,55 @@ public class MultiplayerView extends JPanel {
             }
         });
 
-        JCheckBox publicCheck = new JCheckBox("Make room public");
-        publicCheck.setOpaque(false);
-        publicCheck.setForeground(UIConstants.TEXT_MUTED);
-        publicCheck.setFont(UIConstants.FONT_SMALL);
+        cardOptsRow.add(levelLbl); cardOptsRow.add(levelBox);
+        cardOptsRow.add(catLbl);   cardOptsRow.add(catBox);
 
-        // Game mode selection
-        JLabel modeLbl = new JLabel("Mode:");
-        modeLbl.setForeground(UIConstants.TEXT_MUTED);
-        modeLbl.setFont(UIConstants.FONT_SMALL);
-        JComboBox<String> modeBox = new JComboBox<String>(
-                new String[]{"Card Game", "Quiz"});
-        styleCombo(modeBox);
-        modeBox.addActionListener(new ActionListener() {
+        // Options row 3: quiz specific (subject + question count)
+        final JPanel quizOptsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        quizOptsRow.setOpaque(false);
+        quizOptsRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        subjectLbl = new JLabel("Subject:");
+        subjectLbl.setForeground(UIConstants.TEXT_MUTED);
+        subjectLbl.setFont(UIConstants.FONT_SMALL);
+        subjectBox = new JComboBox<String>(new String[]{
+                "GK", "ENGLISH", "OPERATING_SYSTEMS", "DATA_STRUCTURES",
+                "COMPUTER_NETWORKS", "DBMS", "OOP", "ALGORITHMS"
+        });
+        styleCombo(subjectBox);
+        subjectBox.addActionListener(new ActionListener() {
             @Override public void actionPerformed(ActionEvent e) {
-                quizMode = modeBox.getSelectedIndex() == 1;
-                // Disable category/level if quiz mode
-                levelBox.setEnabled(!quizMode);
-                catBox.setEnabled(!quizMode);
+                try {
+                    selectedSubject = Question.Subject.valueOf(
+                            (String) subjectBox.getSelectedItem());
+                } catch (Exception ignored) {}
             }
         });
 
-        optRow.add(lvlLbl); optRow.add(levelBox);
-        optRow.add(catLbl); optRow.add(catBox);
-        optRow.add(modeLbl); optRow.add(modeBox);
-        optRow.add(publicCheck);
+        qCountLbl = new JLabel("Questions:");
+        qCountLbl.setForeground(UIConstants.TEXT_MUTED);
+        qCountLbl.setFont(UIConstants.FONT_SMALL);
+        qCountBox = new JComboBox<Integer>(new Integer[]{5, 10, 15, 20});
+        qCountBox.setSelectedItem(10);
+        styleCombo(qCountBox);
+        qCountBox.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                selectedQuestionCount = (Integer) qCountBox.getSelectedItem();
+            }
+        });
+
+        quizOptsRow.add(subjectLbl); quizOptsRow.add(subjectBox);
+        quizOptsRow.add(qCountLbl);  quizOptsRow.add(qCountBox);
+
+        // Hook mode switch to show/hide appropriate option rows
+        modeBox.addActionListener(new ActionListener() {
+            @Override public void actionPerformed(ActionEvent e) {
+                quizMode = modeBox.getSelectedIndex() == 1;
+                cardOptsRow.setVisible(!quizMode);
+                quizOptsRow.setVisible(quizMode);
+            }
+        });
+        quizOptsRow.setVisible(false); // start in card-game mode
 
         // Error label
         errorLabel = new JLabel(" ");
@@ -206,6 +256,7 @@ public class MultiplayerView extends JPanel {
         JButton joinBtn   = makeBtn("Join Room",   UIConstants.ACCENT_PURPLE);
         JButton backBtn   = makeBtn("Back",        new Color(60,60,80));
 
+        final JCheckBox publicCheckFinal = publicCheck;
         createBtn.addActionListener(new ActionListener() {
             @Override public void actionPerformed(ActionEvent e) {
                 String room = roomField.getText().trim();
@@ -213,7 +264,7 @@ public class MultiplayerView extends JPanel {
                     room = "ROOM" + (1000 + new Random().nextInt(8999));
                     roomField.setText(room);
                 }
-                doCreate(room, publicCheck.isSelected());
+                doCreate(room, publicCheckFinal.isSelected());
             }
         });
 
@@ -238,7 +289,6 @@ public class MultiplayerView extends JPanel {
         btnRow.add(joinBtn);
         btnRow.add(backBtn);
 
-        // Online rooms section
         JLabel roomsTitle = new JLabel("Online Public Rooms");
         roomsTitle.setFont(UIConstants.FONT_HEADING);
         roomsTitle.setForeground(UIConstants.TEXT_PRIMARY);
@@ -262,7 +312,10 @@ public class MultiplayerView extends JPanel {
         p.add(Box.createVerticalStrut(4));
         p.add(roomField);
         p.add(Box.createVerticalStrut(8));
-        p.add(optRow);
+        p.add(modeRow);
+        p.add(Box.createVerticalStrut(4));
+        p.add(cardOptsRow);
+        p.add(quizOptsRow);
         p.add(Box.createVerticalStrut(4));
         p.add(errorLabel);
         p.add(Box.createVerticalStrut(8));
@@ -274,7 +327,6 @@ public class MultiplayerView extends JPanel {
         p.add(Box.createVerticalStrut(6));
         p.add(refreshBtn);
 
-        // Auto-fetch rooms on load
         SwingUtilities.invokeLater(new Runnable() {
             @Override public void run() { fetchRooms(); }
         });
@@ -299,7 +351,6 @@ public class MultiplayerView extends JPanel {
         statusLabel.setForeground(UIConstants.TEXT_MUTED);
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        // Host status label - shows if user is host or guest
         hostStatusLabel = new JLabel("", SwingConstants.CENTER);
         hostStatusLabel.setFont(UIConstants.FONT_SMALL);
         hostStatusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -326,8 +377,7 @@ public class MultiplayerView extends JPanel {
                 }
             }
         });
-        
-        // Now update host status after startBtn is created
+
         updateHostStatusLabel();
 
         JButton cancelBtn = makeBtn("Cancel", new Color(100, 40, 40));
@@ -362,7 +412,7 @@ public class MultiplayerView extends JPanel {
     }
 
     // ---- Helpers ----
-    
+
     private void updateHostStatusLabel() {
         if (isHost) {
             hostStatusLabel.setText("YOU ARE THE HOST - Click Start to begin!");
@@ -386,7 +436,12 @@ public class MultiplayerView extends JPanel {
             return;
         }
         roomId = room;
-        client.createRoom(room, username, selectedLevel, selectedCategory, isPublic);
+        if (quizMode) {
+            client.createQuizRoom(room, username, selectedSubject,
+                    selectedQuestionCount, isPublic);
+        } else {
+            client.createRoom(room, username, selectedLevel, selectedCategory, isPublic);
+        }
         statusLabel.setText("Room: " + room + "  |  Waiting for players...");
         cardLayout.show(cardPanel, "waiting");
         errorLabel.setText(" ");
@@ -408,7 +463,7 @@ public class MultiplayerView extends JPanel {
     }
 
     private void fetchRooms() {
-        GameClient temp = new GameClient(SERVER_HOST, SERVER_PORT);
+        final GameClient temp = new GameClient(SERVER_HOST, SERVER_PORT);
         final boolean[] done = {false};
         if (!temp.connect(new GameClient.MessageListener() {
             @Override public void onMessage(final String msg) {
@@ -433,7 +488,6 @@ public class MultiplayerView extends JPanel {
             return;
         }
         temp.listRooms();
-        // Auto-disconnect after 3s if no response
         Timer t = new Timer(3000, new ActionListener() {
             @Override public void actionPerformed(ActionEvent e) {
                 if (!done[0]) { done[0] = true; temp.disconnect(); }
@@ -450,23 +504,26 @@ public class MultiplayerView extends JPanel {
             none.setForeground(UIConstants.TEXT_MUTED);
             roomListPanel.add(none);
         } else {
-            // Format: room1~players~level~started|room2~...
+            // Format: room1~players~level~started~type|room2~...
+            // (type: "C" = card, "Q" = quiz — older servers may omit this field)
             String[] entries = data.split("\\|");
             for (String entry : entries) {
                 if (entry.trim().isEmpty()) continue;
                 String[] parts = entry.split("~");
                 if (parts.length < 4) continue;
-                String rid     = parts[0];
-                String players = parts[1];
-                String level   = parts[2];
+                final String rid = parts[0];
+                String players  = parts[1];
+                String level    = parts[2];
                 boolean started = "1".equals(parts[3]);
+                String type     = parts.length >= 5 ? parts[4] : "C";
+                String typeLbl  = "Q".equals(type) ? "Quiz" : "Cards L" + level;
 
                 JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
                 row.setOpaque(false);
 
                 JLabel info = new JLabel(
                         rid + "   Players: " + players
-                        + "   Level " + level
+                        + "   " + typeLbl
                         + (started ? "   [In Progress]" : "   [Waiting]"));
                 info.setFont(UIConstants.FONT_SMALL);
                 info.setForeground(started
@@ -474,11 +531,10 @@ public class MultiplayerView extends JPanel {
 
                 JButton joinBtn = makeBtn("Join", UIConstants.ACCENT_PURPLE);
                 joinBtn.setPreferredSize(new Dimension(70, 26));
-                final String finalRid = rid;
                 joinBtn.addActionListener(new ActionListener() {
                     @Override public void actionPerformed(ActionEvent e) {
-                        roomField.setText(finalRid);
-                        doJoin(finalRid);
+                        roomField.setText(rid);
+                        doJoin(rid);
                     }
                 });
                 joinBtn.setEnabled(!started);
@@ -519,8 +575,20 @@ public class MultiplayerView extends JPanel {
             // CREATED:roomId:color
             String[] p = msg.split(":");
             if (p.length >= 3) myColor = p[2];
-            isHost = true;  // Creator is the host
+            isHost = true;
+            quizMode = false;
             statusLabel.setText("Room created! Share Room ID: " + roomId);
+            statusLabel.setForeground(UIConstants.SUCCESS_GREEN);
+            updateHostStatusLabel();
+            fetchRooms();
+
+        } else if (msg.startsWith("CREATED_QUIZ:")) {
+            // CREATED_QUIZ:roomId:color
+            String[] p = msg.split(":");
+            if (p.length >= 3) myColor = p[2];
+            isHost = true;
+            quizMode = true;
+            statusLabel.setText("Quiz room created! Share Room ID: " + roomId);
             statusLabel.setForeground(UIConstants.SUCCESS_GREEN);
             updateHostStatusLabel();
             fetchRooms();
@@ -529,13 +597,30 @@ public class MultiplayerView extends JPanel {
             // JOINED:roomId:color:scoreboard
             String[] p = msg.split(":", 4);
             if (p.length >= 3) myColor = p[2];
-            isHost = false;  // Joiner is NOT the host
+            isHost = false;
+            quizMode = false;
             statusLabel.setText("Joined! Waiting for host to start...");
             statusLabel.setForeground(UIConstants.TEXT_PRIMARY);
             updateHostStatusLabel();
 
+        } else if (msg.startsWith("JOINED_QUIZ:")) {
+            // JOINED_QUIZ:roomId:color:scoreboard:subject:qCount
+            String[] p = msg.split(":");
+            if (p.length >= 3) myColor = p[2];
+            isHost = false;
+            quizMode = true;
+            // Take subject + qCount from server if sent
+            try {
+                if (p.length >= 6) {
+                    selectedSubject = Question.Subject.valueOf(p[4]);
+                    totalQuestionsFromServer = Integer.parseInt(p[5]);
+                }
+            } catch (Exception ignored) {}
+            statusLabel.setText("Joined quiz room! Waiting for host to start...");
+            statusLabel.setForeground(UIConstants.TEXT_PRIMARY);
+            updateHostStatusLabel();
+
         } else if (msg.startsWith("PLAYER_JOINED:")) {
-            // PLAYER_JOINED:username:color:scoreboard
             String[] p = msg.split(":", 4);
             String who = p.length >= 2 ? p[1] : "Someone";
             statusLabel.setText(who + " joined the room!");
@@ -543,7 +628,11 @@ public class MultiplayerView extends JPanel {
 
         } else if (msg.startsWith("GAMESTART:")) {
             // GAMESTART:rows:cols:values:scoreboard:firstTurn
-            parseAndStartGame(msg);
+            parseAndStartCardGame(msg);
+
+        } else if (msg.startsWith("QUIZSTART:")) {
+            // QUIZSTART:roomId:totalQ:scoreboard:firstTurn
+            parseAndStartQuiz(msg);
 
         } else if (msg.startsWith("ERROR:")) {
             String err = msg.substring(6);
@@ -554,43 +643,53 @@ public class MultiplayerView extends JPanel {
         }
     }
 
-    private void parseAndStartGame(String msg) {
+    private void parseAndStartCardGame(String msg) {
         try {
-            // GAMESTART:rows:cols:v1,v2,...:scoreboard:firstTurn
-            // Split only first 4 colons
             String body = msg.substring("GAMESTART:".length());
             String[] parts = body.split(":", 4);
-            // parts[0] = rows
-            // parts[1] = cols
-            // parts[2] = values (comma separated)
-            // parts[3] = scoreboard:firstTurn
-
             int rows = Integer.parseInt(parts[0]);
             int cols = Integer.parseInt(parts[1]);
             String[] values = parts[2].split(",");
 
-            // parts[3] = "scoreboard:firstTurn"
-            // scoreboard uses ~ and | so last colon = separator before firstTurn
             String rest = parts[3];
             int lastColon = rest.lastIndexOf(":");
-            String scoreboard  = lastColon >= 0 ? rest.substring(0, lastColon) : "";
-            String firstTurn   = lastColon >= 0 ? rest.substring(lastColon + 1) : username;
+            String scoreboard = lastColon >= 0 ? rest.substring(0, lastColon) : "";
+            String firstTurn  = lastColon >= 0 ? rest.substring(lastColon + 1) : username;
 
             String color = (myColor != null && !myColor.isEmpty()) ? myColor : "#3498DB";
-
-            if (quizMode) {
-                listener.onQuizStart(roomId, username, client,
-                        color, scoreboard, firstTurn,
-                        Question.Subject.GK);
-            } else {
-                listener.onGameStart(roomId, username, client,
-                        rows, cols, values, selectedCategory,
-                        color, scoreboard, firstTurn);
-            }
+            listener.onGameStart(roomId, username, client,
+                    rows, cols, values, selectedCategory,
+                    color, scoreboard, firstTurn);
 
         } catch (Exception e) {
             System.err.println("[Client] Failed to parse GAMESTART: " + e.getMessage());
             errorLabel.setText("Failed to start game. Try again.");
+            cardLayout.show(cardPanel, "lobby");
+        }
+    }
+
+    private void parseAndStartQuiz(String msg) {
+        try {
+            // QUIZSTART:roomId:totalQ:scoreboard:firstTurn
+            // roomId has no colons; scoreboard uses ~ and |
+            String body = msg.substring("QUIZSTART:".length());
+            // Split on ':' with limit 4 -> [roomId, totalQ, scoreboard, firstTurn]
+            String[] parts = body.split(":", 4);
+            if (parts.length < 4) throw new IllegalArgumentException("bad QUIZSTART");
+
+            int totalQ       = Integer.parseInt(parts[1]);
+            String scoreboard = parts[2];
+            String firstTurn  = parts[3];
+
+            totalQuestionsFromServer = totalQ;
+
+            String color = (myColor != null && !myColor.isEmpty()) ? myColor : "#3498DB";
+            listener.onQuizStart(roomId, username, client,
+                    totalQ, color, scoreboard, firstTurn, selectedSubject);
+
+        } catch (Exception e) {
+            System.err.println("[Client] Failed to parse QUIZSTART: " + e.getMessage());
+            errorLabel.setText("Failed to start quiz. Try again.");
             cardLayout.show(cardPanel, "lobby");
         }
     }

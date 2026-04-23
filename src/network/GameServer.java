@@ -2,6 +2,8 @@ package network;
 
 import model.Card;
 import model.GameBoard;
+import quiz.Question;
+import quiz.QuizBank;
 
 import java.io.*;
 import java.net.*;
@@ -9,9 +11,17 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Simplified Multiplayer TCP Server
- * Fixed protocol - no colons in scoreboard during START
- * Rooms auto-start when host clicks start
+ * Multiplayer TCP Server - now with quiz mode support.
+ *
+ * Card game flow is unchanged.
+ *
+ * Quiz flow per question:
+ *   1. Server sends QUESTION to all; only primaryUser can answer (phase 1, 15s).
+ *   2. If primary is correct -> +5, move to next question.
+ *   3. If primary is wrong or times out -> -2 (only if answered) and server
+ *      opens phase 2 (steal). Other players buzz; first BUZZ wins the floor
+ *      for 10s. Correct steal +5, wrong steal -2. Primary is excluded.
+ *   4. Turn rotates each question regardless of outcome.
  */
 public class GameServer {
 
@@ -31,10 +41,19 @@ public class GameServer {
         "#9B59B6", "#1ABC9C", "#E91E63", "#FF5722"
     };
 
+    // ---- Scoring ----
+    private static final int SCORE_CORRECT = 5;
+    private static final int SCORE_WRONG   = -2;
+    private static final int PHASE1_SECONDS = 15;
+    private static final int PHASE2_SECONDS = 10;
+
     private final Map<String, RoomState> rooms =
             new ConcurrentHashMap<String, RoomState>();
     private final List<ClientHandler> allClients =
             new CopyOnWriteArrayList<ClientHandler>();
+
+    private final ScheduledExecutorService scheduler =
+            Executors.newScheduledThreadPool(2);
 
     private ServerSocket serverSocket;
     private boolean running;
@@ -42,12 +61,27 @@ public class GameServer {
     // ---- Room State ----
     static class RoomState {
         String roomId;
-        String hostPlayer;  // Store host for permission checks
+        String hostPlayer;
         boolean isPublic;
+        boolean started;
+
+        // Card-game fields (kept for existing card mode)
         int level;
         Card.Category category;
-        boolean started;
         GameBoard board;
+        String firstFlipUser = null;
+        int[]  firstFlipPos  = null;
+
+        // Quiz-game fields
+        boolean quizRoom = false;
+        Question.Subject subject;
+        int questionCount = 10;
+        List<Question> questions = new ArrayList<Question>();
+        int currentQIndex = -1;
+        int currentPhase  = 0;   // 0 = between questions, 1 = primary, 2 = steal
+        String currentBuzzUser = null;   // whoever has the floor in phase 2
+        Set<String> phase2Answered = new HashSet<String>(); // not used for fair steal
+        ScheduledFuture<?> currentTimer;
 
         List<String> players           = new ArrayList<String>();
         Map<String, String>  colors    = new HashMap<String, String>();
@@ -56,8 +90,6 @@ public class GameServer {
         Map<String, Boolean> votes     = new HashMap<String, Boolean>();
 
         int turnIndex = 0;
-        String firstFlipUser = null;
-        int[]  firstFlipPos  = null;
 
         String currentTurn() {
             if (players.isEmpty()) return "";
@@ -86,8 +118,6 @@ public class GameServer {
                 turnIndex = turnIndex % players.size();
         }
 
-        // Scoreboard as pipe-separated: user|score|color~user|score|color
-        // Using | and ~ to avoid colon conflicts
         String scoreboard() {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < players.size(); i++) {
@@ -97,6 +127,11 @@ public class GameServer {
                   .append("|").append(colors.get(p));
             }
             return sb.toString();
+        }
+
+        Question currentQuestion() {
+            if (currentQIndex < 0 || currentQIndex >= questions.size()) return null;
+            return questions.get(currentQIndex);
         }
     }
 
@@ -135,7 +170,7 @@ public class GameServer {
         System.out.println("[Server] Default public rooms created.");
     }
 
-    // ---- Room Operations ----
+    // ---- Room Operations (card game) ----
 
     synchronized String createRoom(String roomId, String host, int level,
                                     Card.Category cat, boolean isPublic,
@@ -144,16 +179,38 @@ public class GameServer {
             return "ERROR:Room already exists";
         RoomState r = new RoomState();
         r.roomId      = roomId;
-        r.hostPlayer  = host;  // Set host
+        r.hostPlayer  = host;
         r.isPublic    = isPublic;
         r.level       = level;
         r.category    = cat;
         r.started     = false;
         r.addPlayer(host, handler);
         rooms.put(roomId, r);
-        System.out.println("[Server] Room created: " + roomId + " by " + host + " (HOST)");
-        // CREATED:roomId:color
+        System.out.println("[Server] Card room created: " + roomId + " by " + host);
         return "CREATED:" + roomId + ":" + r.colors.get(host);
+    }
+
+    // ---- Quiz room creation ----
+
+    synchronized String createQuizRoom(String roomId, String host,
+                                        Question.Subject subject, int qCount,
+                                        boolean isPublic, ClientHandler handler) {
+        if (rooms.containsKey(roomId))
+            return "ERROR:Room already exists";
+        RoomState r = new RoomState();
+        r.roomId      = roomId;
+        r.hostPlayer  = host;
+        r.isPublic    = isPublic;
+        r.started     = false;
+        r.quizRoom    = true;
+        r.subject     = subject;
+        r.questionCount = Math.max(3, Math.min(qCount, 20));
+        r.addPlayer(host, handler);
+        rooms.put(roomId, r);
+        System.out.println("[Server] Quiz room created: " + roomId + " by " + host
+                + " subject=" + subject + " qCount=" + r.questionCount);
+        // CREATED_QUIZ:roomId:color
+        return "CREATED_QUIZ:" + roomId + ":" + r.colors.get(host);
     }
 
     synchronized String joinRoom(String roomId, String user, ClientHandler handler) {
@@ -163,10 +220,12 @@ public class GameServer {
         r.addPlayer(user, handler);
         String color = r.colors.get(user);
         System.out.println("[Server] " + user + " joined room " + roomId);
-        // Tell others someone joined
         broadcastExcept(roomId, "PLAYER_JOINED:" + user + ":" + color
                 + ":" + r.scoreboard(), user);
-        // JOINED:roomId:color:scoreboard
+        if (r.quizRoom) {
+            return "JOINED_QUIZ:" + roomId + ":" + color + ":" + r.scoreboard()
+                    + ":" + r.subject.name() + ":" + r.questionCount;
+        }
         return "JOINED:" + roomId + ":" + color + ":" + r.scoreboard();
     }
 
@@ -177,9 +236,9 @@ public class GameServer {
             sb.append(r.roomId).append("~")
               .append(r.players.size()).append("~")
               .append(r.level).append("~")
-              .append(r.started ? "1" : "0");
+              .append(r.started ? "1" : "0").append("~")
+              .append(r.quizRoom ? "Q" : "C");
         }
-        // LIST:room1~players~level~started|room2~...
         return "LIST:" + sb.toString();
     }
 
@@ -193,23 +252,31 @@ public class GameServer {
             System.out.println("[Server] startGame failed: no players in " + roomId);
             return;
         }
-        // CRITICAL: Only host can start the game
         if (!requester.equals(r.hostPlayer)) {
-            System.out.println("[Server] startGame blocked: " + requester + " is not host (" + r.hostPlayer + ") of " + roomId);
+            System.out.println("[Server] startGame blocked: " + requester
+                    + " is not host (" + r.hostPlayer + ") of " + roomId);
             ClientHandler h = r.handlers.get(requester);
             if (h != null) h.send("ERROR:Only the host can start the game");
             return;
         }
+
+        if (r.quizRoom) {
+            startQuizGame(r);
+        } else {
+            startCardGame(r);
+        }
+    }
+
+    private void startCardGame(RoomState r) {
         r.started   = true;
         r.turnIndex = 0;
         r.votes.clear();
         r.board     = new GameBoard(r.level, r.category);
         for (String p : r.players) r.scores.put(p, 0);
 
-        System.out.println("[Server] Game starting in room " + roomId
+        System.out.println("[Server] Card game starting in " + r.roomId
                 + " with " + r.players.size() + " players");
 
-        // Build board data (values only, comma-separated)
         StringBuilder vals = new StringBuilder();
         for (int row = 0; row < r.board.getRows(); row++) {
             for (int col = 0; col < r.board.getCols(); col++) {
@@ -218,20 +285,44 @@ public class GameServer {
             }
         }
 
-        // GAMESTART:rows:cols:values:scoreboard:firstTurn
-        // Use GAMESTART (not START) to avoid keyword confusion
         String msg = "GAMESTART:" + r.board.getRows()
                 + ":" + r.board.getCols()
                 + ":" + vals.toString()
                 + ":" + r.scoreboard()
                 + ":" + r.currentTurn();
-        broadcastAll(roomId, msg);
-        System.out.println("[Server] GAMESTART sent to room " + roomId);
+        broadcastAll(r.roomId, msg);
     }
+
+    private void startQuizGame(RoomState r) {
+        r.started   = true;
+        r.turnIndex = 0;
+        for (String p : r.players) r.scores.put(p, 0);
+
+        // Pick N random questions from the subject
+        List<Question> picked = QuizBank.getRandom(r.subject, r.questionCount);
+        r.questions = picked;
+        r.currentQIndex = -1;
+
+        System.out.println("[Server] Quiz starting in " + r.roomId
+                + " (" + r.questions.size() + " questions, subject=" + r.subject + ")");
+
+        // QUIZSTART:roomId:totalQuestions:scoreboard:firstTurn
+        broadcastAll(r.roomId, "QUIZSTART:" + r.roomId
+                + ":" + r.questions.size()
+                + ":" + r.scoreboard()
+                + ":" + r.currentTurn());
+
+        // Send the first question after a short delay so clients can swap UI
+        scheduler.schedule(new Runnable() {
+            @Override public void run() { nextQuestion(r.roomId); }
+        }, 1500, TimeUnit.MILLISECONDS);
+    }
+
+    // ---- Card game handlers (unchanged behavior) ----
 
     synchronized void handleFlip(String roomId, String user, int row, int col) {
         RoomState r = rooms.get(roomId);
-        if (r == null || !r.started) return;
+        if (r == null || !r.started || r.quizRoom) return;
 
         if (!user.equals(r.currentTurn())) {
             ClientHandler h = r.handlers.get(user);
@@ -239,31 +330,25 @@ public class GameServer {
             return;
         }
 
-        // Validate indices to prevent out-of-bounds
         if (row < 0 || row >= r.board.getRows() || col < 0 || col >= r.board.getCols()) {
             ClientHandler h = r.handlers.get(user);
             if (h != null) h.send("ERROR:Invalid card position");
             return;
         }
 
-        model.Card card = r.board.getCard(row, col);
-        // CRITICAL: Check card state before processing
-        if (card == null || card.isMatched() || card.isFlipped()) {
-            System.out.println("[Server] Flip rejected: card already matched/flipped at (" + row + "," + col + ")");
-            return;
-        }
+        Card card = r.board.getCard(row, col);
+        if (card == null || card.isMatched() || card.isFlipped()) return;
 
         card.flip();
         String cardVal = card.getValue() != null ? card.getValue() : "unknown";
-        broadcastAll(roomId, "FLIP:" + user + ":" + row + ":" + col
-                + ":" + cardVal);
+        broadcastAll(roomId, "FLIP:" + user + ":" + row + ":" + col + ":" + cardVal);
 
         if (r.firstFlipPos == null) {
             r.firstFlipUser = user;
             r.firstFlipPos  = new int[]{row, col};
         } else {
-            model.Card first  = r.board.getCard(r.firstFlipPos[0], r.firstFlipPos[1]);
-            model.Card second = card;
+            Card first  = r.board.getCard(r.firstFlipPos[0], r.firstFlipPos[1]);
+            Card second = card;
 
             if (first.matches(second)) {
                 int fr = r.firstFlipPos[0], fc = r.firstFlipPos[1];
@@ -322,13 +407,199 @@ public class GameServer {
             } else {
                 broadcastAll(roomId, "REPLAYLEVEL:" + r.level);
             }
-            // Auto-start the next level (initiated by server/host authority)
             startGame(roomId, r.hostPlayer);
         } else {
             broadcastAll(roomId,
                     "VOTEUPDATE:" + r.votes.size() + ":" + r.players.size());
         }
     }
+
+    // ---- Quiz handlers ----
+
+    private synchronized void nextQuestion(String roomId) {
+        RoomState r = rooms.get(roomId);
+        if (r == null || !r.started || !r.quizRoom) return;
+
+        r.currentQIndex++;
+        if (r.currentQIndex >= r.questions.size()) {
+            endQuiz(r);
+            return;
+        }
+        r.currentPhase = 1;
+        r.currentBuzzUser = null;
+        r.phase2Answered.clear();
+
+        Question q = r.currentQuestion();
+        String primary = r.currentTurn();
+
+        // QUESTION:qIdx:totalQ:primaryUser:question:opt0|opt1|opt2|opt3:timeSec
+        String optsJoined = q.getOptions()[0] + "|" + q.getOptions()[1]
+                + "|" + q.getOptions()[2] + "|" + q.getOptions()[3];
+        broadcastAll(roomId, "QUESTION:" + r.currentQIndex
+                + ":" + r.questions.size()
+                + ":" + primary
+                + ":" + q.getQuestion()
+                + ":" + optsJoined
+                + ":" + PHASE1_SECONDS);
+
+        scheduleTimeout(r, PHASE1_SECONDS, 1, r.currentQIndex);
+    }
+
+    private void scheduleTimeout(final RoomState r, int seconds,
+                                  final int phase, final int qIdxSnapshot) {
+        if (r.currentTimer != null) r.currentTimer.cancel(false);
+        final String roomId = r.roomId;
+        r.currentTimer = scheduler.schedule(new Runnable() {
+            @Override public void run() {
+                onPhaseTimeout(roomId, phase, qIdxSnapshot);
+            }
+        }, seconds, TimeUnit.SECONDS);
+    }
+
+    private synchronized void onPhaseTimeout(String roomId, int phase, int qIdxSnapshot) {
+        RoomState r = rooms.get(roomId);
+        if (r == null || !r.started || !r.quizRoom) return;
+        // Only act if question hasn't moved on
+        if (r.currentQIndex != qIdxSnapshot) return;
+        if (r.currentPhase != phase) return;
+
+        Question q = r.currentQuestion();
+        if (q == null) return;
+
+        if (phase == 1) {
+            // Primary timed out - no score change (only answering gives -2)
+            // Open to steal if more than 1 player exists
+            if (r.players.size() <= 1) {
+                // Solo mode edge case - skip
+                advanceAfterQuestion(r, q.getCorrectIndex());
+                return;
+            }
+            broadcastAll(roomId, "PHASE2:" + r.currentQIndex
+                    + ":" + PHASE2_SECONDS);
+            r.currentPhase = 2;
+            r.currentBuzzUser = null;
+            scheduleTimeout(r, PHASE2_SECONDS, 2, r.currentQIndex);
+
+        } else if (phase == 2) {
+            if (r.currentBuzzUser == null) {
+                // Nobody buzzed - just reveal and move on
+                advanceAfterQuestion(r, q.getCorrectIndex());
+            } else {
+                // Buzzer user timed out on their answer - treat as wrong
+                applyScore(r, r.currentBuzzUser, SCORE_WRONG);
+                broadcastAll(roomId, "ANSWERED:" + r.currentBuzzUser
+                        + ":-1:0:" + r.scoreboard()
+                        + ":" + q.getCorrectIndex());
+                advanceAfterQuestion(r, q.getCorrectIndex());
+            }
+        }
+    }
+
+    synchronized void handleAnswer(String roomId, String user, int optIdx) {
+        RoomState r = rooms.get(roomId);
+        if (r == null || !r.started || !r.quizRoom) return;
+        Question q = r.currentQuestion();
+        if (q == null) return;
+
+        if (r.currentPhase == 1) {
+            // Only the primary can answer in phase 1
+            if (!user.equals(r.currentTurn())) {
+                ClientHandler h = r.handlers.get(user);
+                if (h != null) h.send("BLOCKED:Not your question");
+                return;
+            }
+            boolean correct = (optIdx == q.getCorrectIndex());
+            if (correct) {
+                applyScore(r, user, SCORE_CORRECT);
+                broadcastAll(roomId, "ANSWERED:" + user + ":" + optIdx + ":1:"
+                        + r.scoreboard() + ":" + q.getCorrectIndex());
+                advanceAfterQuestion(r, q.getCorrectIndex());
+            } else {
+                applyScore(r, user, SCORE_WRONG);
+                broadcastAll(roomId, "ANSWERED:" + user + ":" + optIdx + ":0:"
+                        + r.scoreboard() + ":" + q.getCorrectIndex());
+                // Open steal round
+                if (r.players.size() <= 1) {
+                    advanceAfterQuestion(r, q.getCorrectIndex());
+                    return;
+                }
+                broadcastAll(roomId, "PHASE2:" + r.currentQIndex
+                        + ":" + PHASE2_SECONDS);
+                r.currentPhase = 2;
+                r.currentBuzzUser = null;
+                scheduleTimeout(r, PHASE2_SECONDS, 2, r.currentQIndex);
+            }
+
+        } else if (r.currentPhase == 2) {
+            // Only the buzzer can answer
+            if (r.currentBuzzUser == null || !user.equals(r.currentBuzzUser)) {
+                ClientHandler h = r.handlers.get(user);
+                if (h != null) h.send("BLOCKED:Not your buzz");
+                return;
+            }
+            boolean correct = (optIdx == q.getCorrectIndex());
+            if (correct) applyScore(r, user, SCORE_CORRECT);
+            else         applyScore(r, user, SCORE_WRONG);
+
+            broadcastAll(roomId, "ANSWERED:" + user + ":" + optIdx
+                    + ":" + (correct ? 1 : 0)
+                    + ":" + r.scoreboard()
+                    + ":" + q.getCorrectIndex());
+            advanceAfterQuestion(r, q.getCorrectIndex());
+        }
+    }
+
+    synchronized void handleBuzz(String roomId, String user) {
+        RoomState r = rooms.get(roomId);
+        if (r == null || !r.started || !r.quizRoom) return;
+        if (r.currentPhase != 2) return;
+        // Primary player excluded from steal round
+        if (user.equals(r.currentTurn())) {
+            ClientHandler h = r.handlers.get(user);
+            if (h != null) h.send("BLOCKED:You cannot buzz your own question");
+            return;
+        }
+        // First buzz wins
+        if (r.currentBuzzUser != null) return;
+        r.currentBuzzUser = user;
+
+        // BUZZED:user:timeSec
+        broadcastAll(roomId, "BUZZED:" + user + ":" + PHASE2_SECONDS);
+        // Reset timer for the buzzer's answer window
+        scheduleTimeout(r, PHASE2_SECONDS, 2, r.currentQIndex);
+    }
+
+    private void applyScore(RoomState r, String user, int delta) {
+        Integer cur = r.scores.get(user);
+        if (cur == null) cur = 0;
+        r.scores.put(user, cur + delta);
+    }
+
+    private void advanceAfterQuestion(RoomState r, int correctIdx) {
+        if (r.currentTimer != null) { r.currentTimer.cancel(false); r.currentTimer = null; }
+        // Rotate turn for every question outcome
+        r.nextTurn();
+        r.currentPhase = 0;
+        r.currentBuzzUser = null;
+
+        final String roomId = r.roomId;
+        scheduler.schedule(new Runnable() {
+            @Override public void run() { nextQuestion(roomId); }
+        }, 2500, TimeUnit.MILLISECONDS);
+    }
+
+    private void endQuiz(RoomState r) {
+        r.started = false;
+        int max = Integer.MIN_VALUE;
+        for (int s : r.scores.values()) if (s > max) max = s;
+        List<String> winners = new ArrayList<String>();
+        for (Map.Entry<String, Integer> e : r.scores.entrySet())
+            if (e.getValue() == max) winners.add(e.getKey());
+        String winner = winners.size() == 1 ? winners.get(0) : "TIE";
+        broadcastAll(r.roomId, "QUIZEND:" + winner + ":" + r.scoreboard());
+    }
+
+    // ---- Generic helpers ----
 
     void removeClient(String roomId, String user) {
         if (roomId == null || user == null) return;
@@ -337,6 +608,7 @@ public class GameServer {
         r.removePlayer(user);
         broadcastAll(roomId, "PLAYERLEFT:" + user + ":" + r.scoreboard());
         if (r.players.isEmpty() && !isDefaultRoom(roomId)) {
+            if (r.currentTimer != null) r.currentTimer.cancel(false);
             rooms.remove(roomId);
         }
     }
@@ -351,7 +623,7 @@ public class GameServer {
     void broadcastAll(String roomId, String msg) {
         RoomState r = rooms.get(roomId);
         if (r == null) return;
-        System.out.println("[Server->Room " + roomId + "] " + msg.substring(0, Math.min(60, msg.length())));
+        System.out.println("[Server->Room " + roomId + "] " + msg.substring(0, Math.min(80, msg.length())));
         for (ClientHandler h : r.handlers.values()) h.send(msg);
     }
 
@@ -366,6 +638,7 @@ public class GameServer {
         running = false;
         try { if (serverSocket != null) serverSocket.close(); }
         catch (IOException ignored) {}
+        scheduler.shutdownNow();
     }
 
     public static void main(String[] args) {

@@ -18,7 +18,7 @@ import java.util.List;
 
 /**
  * Memory Game - Main Entry Point
- * Now includes: Card Memory, Quiz Mode, Brain Training, Multiplayer
+ * Now includes: Card Memory, Quiz Mode, Brain Training, Multiplayer (Card + Quiz)
  */
 public class Main {
 
@@ -32,6 +32,7 @@ public class Main {
     private static final String SCREEN_GAME     = "GAME";
     private static final String SCREEN_MULTI    = "MULTIPLAYER";
     private static final String SCREEN_MPGAME   = "MPGAME";
+    private static final String SCREEN_MP_QUIZ  = "MP_QUIZ";
     private static final String SCREEN_QUIZ_SEL = "QUIZ_SEL";
     private static final String SCREEN_QUIZ     = "QUIZ";
     private static final String SCREEN_QUIZ_RES = "QUIZ_RES";
@@ -73,7 +74,7 @@ public class Main {
         // Add all screen placeholders
         String[] screens = {
             SCREEN_LOGIN, SCREEN_HOME, SCREEN_CATEGORY, SCREEN_GAME,
-            SCREEN_MULTI, SCREEN_MPGAME, SCREEN_QUIZ_SEL, SCREEN_QUIZ,
+            SCREEN_MULTI, SCREEN_MPGAME, SCREEN_MP_QUIZ, SCREEN_QUIZ_SEL, SCREEN_QUIZ,
             SCREEN_QUIZ_RES, SCREEN_BRAIN, SCREEN_PATH, SCREEN_SPOT, SCREEN_JIGSAW
         };
         for (String s : screens) addPlaceholder(s);
@@ -152,28 +153,11 @@ public class Main {
             }
             @Override
             public void onQuizStart(String roomId, String username, GameClient client,
-                                    String myColor, String scoreboard,
-                                    String firstTurnPlayer, Question.Subject subject) {
-                // For quiz multiplayer - launch quiz with same players
-                // Players race to answer - server tracks who answers first
-                // For now launch a standard quiz session
-                java.util.List<quiz.Question> questions = quiz.QuizBank.getRandom(subject, 10);
-                quiz.QuizController qc = new quiz.QuizController(questions);
-                QuizGameView qv = new QuizGameView(qc, new QuizGameView.QuizGameListener() {
-                    @Override public void onQuizComplete(quiz.QuizController ctrl) {
-                        authController.updateCurrentUser(ctrl.getScore(), 1);
-                        QuizResultView rv = new QuizResultView(ctrl,
-                                new QuizResultView.ResultListener() {
-                                    @Override public void onPlayAgain() { goHome(); }
-                                    @Override public void onHome()      { goHome(); }
-                                });
-                        replaceScreen(SCREEN_QUIZ_RES, rv);
-                        showScreen(SCREEN_QUIZ_RES);
-                    }
-                    @Override public void onHome() { goHome(); }
-                });
-                replaceScreen(SCREEN_QUIZ, qv);
-                showScreen(SCREEN_QUIZ);
+                                    int totalQuestions, String myColor,
+                                    String scoreboard, String firstTurnPlayer,
+                                    Question.Subject subject) {
+                launchMultiplayerQuiz(roomId, username, client,
+                        totalQuestions, scoreboard, firstTurnPlayer);
             }
             @Override public void onBack() { goHome(); }
         });
@@ -314,6 +298,19 @@ public class Main {
                 });
         replaceScreen(SCREEN_MPGAME, mpView);
         showScreen(SCREEN_MPGAME);
+    }
+
+    private static void launchMultiplayerQuiz(String roomId, String username,
+                                               GameClient client, int totalQuestions,
+                                               String scoreboard, String firstTurnPlayer) {
+        MultiplayerQuizView mpQuiz = new MultiplayerQuizView(
+                roomId, username, client, totalQuestions,
+                scoreboard, firstTurnPlayer,
+                new MultiplayerQuizView.MPQuizListener() {
+                    @Override public void onHomeClicked() { goHome(); }
+                });
+        replaceScreen(SCREEN_MP_QUIZ, mpQuiz);
+        showScreen(SCREEN_MP_QUIZ);
     }
 
     // ---- Navigation Helpers ----
