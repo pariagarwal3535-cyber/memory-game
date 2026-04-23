@@ -351,41 +351,76 @@ public class MultiplayerBoardView extends JPanel implements GameClient.MessageLi
         String[] p = message.split(":");
         switch (p[0]) {
             case "FLIP": {
-                int r = Integer.parseInt(p[2]);
-                int c = Integer.parseInt(p[3]);
-                flipped[r * cols + c] = true;
-                cardButtons[r][c].repaint();
+                // FLIP:user:row:col:value
+                if (p.length < 4) break;
+                try {
+                    int r = Integer.parseInt(p[2]);
+                    int c = Integer.parseInt(p[3]);
+                    // Validate indices
+                    if (r >= 0 && r < rows && c >= 0 && c < cols) {
+                        int idx = r * cols + c;
+                        if (!flipped[idx] && !matched[idx]) {
+                            flipped[idx] = true;
+                            cardButtons[r][c].repaint();
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    System.err.println("[Client] Failed to parse FLIP: " + message);
+                }
                 break;
             }
             case "MATCH": {
-                // MATCH:<username>:<r1>:<c1>:<r2>:<c2>:<#color>:<scoreboard>
-                // p[6] is the hex color like #E74C3C
+                // MATCH:username:r1:c1:r2:c2:#color:scoreboard
                 if (p.length < 7) break;
-                int r1 = Integer.parseInt(p[2]), c1 = Integer.parseInt(p[3]);
-                int r2 = Integer.parseInt(p[4]), c2 = Integer.parseInt(p[5]);
-                String color = p[6];
+                try {
+                    int r1 = Integer.parseInt(p[2]), c1 = Integer.parseInt(p[3]);
+                    int r2 = Integer.parseInt(p[4]), c2 = Integer.parseInt(p[5]);
+                    String color = p[6];
+                    
+                    // Validate all indices
+                    if ((r1 >= 0 && r1 < rows && c1 >= 0 && c1 < cols) &&
+                        (r2 >= 0 && r2 < rows && c2 >= 0 && c2 < cols)) {
+                        int idx1 = r1 * cols + c1;
+                        int idx2 = r2 * cols + c2;
+                        
+                        matched[idx1] = true;
+                        matched[idx2] = true;
+                        matchedByColor[idx1] = color;
+                        matchedByColor[idx2] = color;
+                        flipped[idx1] = false;  // Hide after match
+                        flipped[idx2] = false;  // Hide after match
+                        
+                        cardButtons[r1][c1].repaint();
+                        cardButtons[r2][c2].repaint();
+                    }
 
-                // Scoreboard comes after color field
-                int colorEnd = "MATCH:".length() + p[1].length() + 1
-                        + p[2].length() + 1 + p[3].length() + 1
-                        + p[4].length() + 1 + p[5].length() + 1
-                        + p[6].length() + 1;
-                String sb = colorEnd < message.length() ? message.substring(colorEnd) : "";
+                    // Scoreboard comes after color field
+                    int colorEnd = "MATCH:".length() + p[1].length() + 1
+                            + p[2].length() + 1 + p[3].length() + 1
+                            + p[4].length() + 1 + p[5].length() + 1
+                            + p[6].length() + 1;
+                    String sb = colorEnd < message.length() ? message.substring(colorEnd) : "";
 
-                matched[r1 * cols + c1] = true;
-                matched[r2 * cols + c2] = true;
-                matchedByColor[r1 * cols + c1] = color;
-                matchedByColor[r2 * cols + c2] = color;
-                cardButtons[r1][c1].repaint();
-                cardButtons[r2][c2].repaint();
-
-                if (!sb.isEmpty()) buildScorePanel(sb, "");
-                statusLabel.setText(p[1] + " matched!");
+                    if (!sb.isEmpty()) buildScorePanel(sb, "");
+                    statusLabel.setText(p[1] + " matched!");
+                    // Update turn: matcher gets another chance
+                    currentTurnPlayer = p[1];
+                    isMyTurn = myUsername.equals(currentTurnPlayer);
+                    updateTurnLabel();
+                    repaintAllCards();
+                } catch (NumberFormatException e) {
+                    System.err.println("[Client] Failed to parse MATCH: " + message);
+                }
                 break;
             }
             case "MISS": {
                 // MISS:username:nextTurnPlayer
                 statusLabel.setText(p[1] + " missed!");
+                // Update turn: chance transfers to next player
+                currentTurnPlayer = p[2];
+                isMyTurn = myUsername.equals(currentTurnPlayer);
+                updateTurnLabel();
+                repaintAllCards();
                 // Hide flipped cards after delay
                 Timer t = new Timer(900, new ActionListener() {
                     @Override public void actionPerformed(ActionEvent e) {

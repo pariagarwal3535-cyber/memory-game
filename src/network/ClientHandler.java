@@ -81,7 +81,7 @@ public class ClientHandler implements Runnable {
             case "STARTGAME": {
                 // STARTGAME:roomId
                 if (p.length < 2) return;
-                server.startGame(p[1]);
+                server.startGame(p[1], username);
                 break;
             }
             case "FLIP": {

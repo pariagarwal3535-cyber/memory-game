@@ -42,6 +42,7 @@ public class GameServer {
     // ---- Room State ----
     static class RoomState {
         String roomId;
+        String hostPlayer;  // Store host for permission checks
         boolean isPublic;
         int level;
         Card.Category category;
@@ -142,14 +143,15 @@ public class GameServer {
         if (rooms.containsKey(roomId))
             return "ERROR:Room already exists";
         RoomState r = new RoomState();
-        r.roomId   = roomId;
-        r.isPublic = isPublic;
-        r.level    = level;
-        r.category = cat;
-        r.started  = false;
+        r.roomId      = roomId;
+        r.hostPlayer  = host;  // Set host
+        r.isPublic    = isPublic;
+        r.level       = level;
+        r.category    = cat;
+        r.started     = false;
         r.addPlayer(host, handler);
         rooms.put(roomId, r);
-        System.out.println("[Server] Room created: " + roomId + " by " + host);
+        System.out.println("[Server] Room created: " + roomId + " by " + host + " (HOST)");
         // CREATED:roomId:color
         return "CREATED:" + roomId + ":" + r.colors.get(host);
     }
@@ -181,7 +183,7 @@ public class GameServer {
         return "LIST:" + sb.toString();
     }
 
-    synchronized void startGame(String roomId) {
+    synchronized void startGame(String roomId, String requester) {
         RoomState r = rooms.get(roomId);
         if (r == null) {
             System.out.println("[Server] startGame failed: room not found " + roomId);
@@ -189,6 +191,13 @@ public class GameServer {
         }
         if (r.players.isEmpty()) {
             System.out.println("[Server] startGame failed: no players in " + roomId);
+            return;
+        }
+        // CRITICAL: Only host can start the game
+        if (!requester.equals(r.hostPlayer)) {
+            System.out.println("[Server] startGame blocked: " + requester + " is not host (" + r.hostPlayer + ") of " + roomId);
+            ClientHandler h = r.handlers.get(requester);
+            if (h != null) h.send("ERROR:Only the host can start the game");
             return;
         }
         r.started   = true;
@@ -230,12 +239,24 @@ public class GameServer {
             return;
         }
 
+        // Validate indices to prevent out-of-bounds
+        if (row < 0 || row >= r.board.getRows() || col < 0 || col >= r.board.getCols()) {
+            ClientHandler h = r.handlers.get(user);
+            if (h != null) h.send("ERROR:Invalid card position");
+            return;
+        }
+
         model.Card card = r.board.getCard(row, col);
-        if (card.isMatched() || card.isFlipped()) return;
+        // CRITICAL: Check card state before processing
+        if (card == null || card.isMatched() || card.isFlipped()) {
+            System.out.println("[Server] Flip rejected: card already matched/flipped at (" + row + "," + col + ")");
+            return;
+        }
 
         card.flip();
+        String cardVal = card.getValue() != null ? card.getValue() : "unknown";
         broadcastAll(roomId, "FLIP:" + user + ":" + row + ":" + col
-                + ":" + card.getValue());
+                + ":" + cardVal);
 
         if (r.firstFlipPos == null) {
             r.firstFlipUser = user;
@@ -300,7 +321,8 @@ public class GameServer {
             } else {
                 broadcastAll(roomId, "REPLAYLEVEL:" + r.level);
             }
-            startGame(roomId);
+            // Auto-start the next level (initiated by server/host authority)
+            startGame(roomId, r.hostPlayer);
         } else {
             broadcastAll(roomId,
                     "VOTEUPDATE:" + r.votes.size() + ":" + r.players.size());

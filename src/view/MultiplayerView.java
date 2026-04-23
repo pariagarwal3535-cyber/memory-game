@@ -42,6 +42,7 @@ public class MultiplayerView extends JPanel {
     private GameClient client;
     private String roomId;
     private String myColor = "#3498DB";
+    private boolean isHost = false;  // Track if current user is host
     private Card.Category selectedCategory = Card.Category.EMOJIS;
     private int selectedLevel = 1;
     private boolean quizMode = false;  // true = quiz multiplayer, false = card game
@@ -50,6 +51,8 @@ public class MultiplayerView extends JPanel {
     private CardLayout cardLayout;
     private JPanel     cardPanel;
     private JLabel     statusLabel;
+    private JLabel     hostStatusLabel;  // Show host status
+    private JButton    startBtn;  // Store reference for enable/disable
     private JTextField roomField;
     private JLabel     errorLabel;
     private JPanel     roomListPanel;
@@ -296,6 +299,11 @@ public class MultiplayerView extends JPanel {
         statusLabel.setForeground(UIConstants.TEXT_MUTED);
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
+        // Host status label - shows if user is host or guest
+        hostStatusLabel = new JLabel("", SwingConstants.CENTER);
+        hostStatusLabel.setFont(UIConstants.FONT_SMALL);
+        hostStatusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
         JLabel hint = new JLabel(
                 "<html><center>Share your Room ID with friends.<br>"
                 + "When ready, click <b>Start Game</b></center></html>",
@@ -304,7 +312,7 @@ public class MultiplayerView extends JPanel {
         hint.setForeground(UIConstants.TEXT_MUTED);
         hint.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JButton startBtn = makeBtn("Start Game", UIConstants.ACCENT_BLUE);
+        startBtn = makeBtn("Start Game", UIConstants.ACCENT_BLUE);
         startBtn.setFont(new Font("Segoe UI", Font.BOLD, 16));
         startBtn.setPreferredSize(new Dimension(200, 50));
         startBtn.setMaximumSize(new Dimension(200, 50));
@@ -318,6 +326,9 @@ public class MultiplayerView extends JPanel {
                 }
             }
         });
+        
+        // Now update host status after startBtn is created
+        updateHostStatusLabel();
 
         JButton cancelBtn = makeBtn("Cancel", new Color(100, 40, 40));
         cancelBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -329,6 +340,7 @@ public class MultiplayerView extends JPanel {
                 }
                 client  = null;
                 roomId  = null;
+                isHost  = false;
                 myColor = "#3498DB";
                 errorLabel.setText(" ");
                 cardLayout.show(cardPanel, "lobby");
@@ -338,6 +350,8 @@ public class MultiplayerView extends JPanel {
         p.add(heading);
         p.add(Box.createVerticalStrut(10));
         p.add(statusLabel);
+        p.add(Box.createVerticalStrut(4));
+        p.add(hostStatusLabel);
         p.add(Box.createVerticalStrut(8));
         p.add(hint);
         p.add(Box.createVerticalStrut(28));
@@ -345,6 +359,20 @@ public class MultiplayerView extends JPanel {
         p.add(Box.createVerticalStrut(14));
         p.add(cancelBtn);
         return p;
+    }
+
+    // ---- Helpers ----
+    
+    private void updateHostStatusLabel() {
+        if (isHost) {
+            hostStatusLabel.setText("YOU ARE THE HOST - Click Start to begin!");
+            hostStatusLabel.setForeground(UIConstants.SUCCESS_GREEN);
+            startBtn.setEnabled(true);
+        } else {
+            hostStatusLabel.setText("Waiting for host to start the game...");
+            hostStatusLabel.setForeground(UIConstants.TEXT_MUTED);
+            startBtn.setEnabled(false);
+        }
     }
 
     // ---- Network Actions ----
@@ -491,16 +519,20 @@ public class MultiplayerView extends JPanel {
             // CREATED:roomId:color
             String[] p = msg.split(":");
             if (p.length >= 3) myColor = p[2];
+            isHost = true;  // Creator is the host
             statusLabel.setText("Room created! Share Room ID: " + roomId);
             statusLabel.setForeground(UIConstants.SUCCESS_GREEN);
+            updateHostStatusLabel();
             fetchRooms();
 
         } else if (msg.startsWith("JOINED:")) {
             // JOINED:roomId:color:scoreboard
             String[] p = msg.split(":", 4);
             if (p.length >= 3) myColor = p[2];
+            isHost = false;  // Joiner is NOT the host
             statusLabel.setText("Joined! Waiting for host to start...");
             statusLabel.setForeground(UIConstants.TEXT_PRIMARY);
+            updateHostStatusLabel();
 
         } else if (msg.startsWith("PLAYER_JOINED:")) {
             // PLAYER_JOINED:username:color:scoreboard
